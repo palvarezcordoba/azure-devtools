@@ -1,0 +1,66 @@
+[package]
+name = "azure-devtools"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "A CLI tool to interact with Azure DevOps environment variables."
+authors = ["Pablo Alvarez <palvarezcordoba@users.noreply.github.com>"]
+repository = "https://github.com/OSPG/azure-devtools"
+keywords = ["azure", "azure-devops", "cli", "devops", "util"]
+categories = ["command-line-utilities", "azure", "pipelines"]
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+strip = true
+codegen-units = 1
+# panic = "abort"
+
+[profile.dev.package]
+insta.opt-level = 3
+similar.opt-level = 3
+
+[lints.clippy]
+module-inception = "allow"
+redundant-clone = "deny"
+redundant-as-str = "deny"
+needless_borrow = "deny"
+needless_borrows_for_generic_args = "deny"
+
+[dependencies]
+anyhow = "1.0.98"
+arboard = "3.6.1"
+async-stream = "0.3.6"
+async-trait = "0.1.89"
+azure_core = { version = "0.28.0", default-features = false, features = ["reqwest"] }
+azure_devops_rust_api = { version = "0.32.0", default-features = false, features = ["distributed_task", "reqwest"] }
+azure_identity = { version = "0.28.0", default-features = false }
+clap = { version = "4.5", features = ["derive"] }
+colored = "2.1"
+crossterm = { version = "0.29.0", features = ["event-stream"] }
+dialoguer = "0.12.0"
+dirs = "6.0.0"
+env_logger = "0.11.8"
+futures = "0.3.31"
+futures-core = "0.3.31"
+fuzzy-matcher = "0.3.7"
+log = "0.4.28"
+log4rs = "1.4.0"
+mockall = "0.13.1"
+ratatui = "0.29.0"
+reqwest = { version = "0.12.24", default-features = false, features = ["charset", "http2", "system-proxy", "rustls-tls", "rustls-tls-webpki-roots"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0.141", features = ["alloc", "indexmap"] }
+serde_yaml = "0.9.34"
+thiserror = "2.0"
+tokio = { version = "1.48.0", features = ["full"] }
+toml = { version = "0.8", features = ["preserve_order"] }
+tracing = "0.1.41"
+
+[patch.crates-io]
+azure_devops_rust_api = { path = "vendor/azure_devops_rust_api" }
+
+[dev-dependencies]
+insta = { version = "1.43.2", features = ["yaml"] }
+pretty_assertions = "1.4"
+tempfile = "3.14"
