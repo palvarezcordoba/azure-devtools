@@ -1,0 +1,22 @@
+digraph AzureDevToolsModuleCoupling {
+  graph [rankdir=LR, bgcolor="transparent", pad="0.35", nodesep="0.55", ranksep="0.8", fontname="Arial", labelloc="t", label="Azure DevTools — Rust Analyzer Module Coupling", outputorder="edgesfirst"];
+  node [shape=box, style="rounded,filled", fontname="Arial", fontsize=11, margin="0.16,0.12", color="#94a3b8", fillcolor="#ffffff", fontcolor="#172033", penwidth=1.4];
+  edge [fontname="Arial", fontsize=9, color="#64748b", fontcolor="#475569", penwidth=1.25, arrowsize=0.7];
+
+  // Node degrees count distinct module-to-module `uses` edges.
+  module_0 [label="azure_vars::state::action\nin 2 | out 0", color="#7c3aed", fillcolor="#f5f3ff"];
+  module_1 [label="azure_vars::state::state\nin 4 | out 0", color="#7c3aed", fillcolor="#f5f3ff"];
+  module_2 [label="azure_vars::state::state_store\nin 0 | out 2", color="#7c3aed", fillcolor="#f5f3ff"];
+  module_3 [label="azure_vars::tui::draw\nin 1 | out 2", color="#16a34a", fillcolor="#f0fdf4"];
+  module_4 [label="azure_vars::tui::handle_input\nin 0 | out 3", color="#16a34a", fillcolor="#f0fdf4"];
+  module_5 [label="azure_vars::tui::widgets\nin 1 | out 1", color="#16a34a", fillcolor="#f0fdf4"];
+
+  module_2 -> module_0 [label="uses"];
+  module_2 -> module_1 [label="uses"];
+  module_3 -> module_1 [label="uses"];
+  module_3 -> module_5 [label="uses"];
+  module_4 -> module_0 [label="uses"];
+  module_4 -> module_1 [label="uses"];
+  module_4 -> module_3 [label="uses"];
+  module_5 -> module_1 [label="uses"];
+}

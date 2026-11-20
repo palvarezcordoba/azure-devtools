@@ -43,6 +43,79 @@ pub trait VariableGroupsClient: Send {
     ) -> anyhow::Result<Vec<VarGroup>>;
 }
 
+#[async_trait]
+pub trait ClipboardAdapter: Send + Sync {
+    async fn set_text(&self, text: String) -> anyhow::Result<()>;
+}
+
+#[derive(Default)]
+pub struct SystemClipboard {
+    clipboard: AsyncMutex<Option<SharedClipboard>>,
+}
+
+impl SystemClipboard {
+    async fn clipboard_handle(&self) -> anyhow::Result<SharedClipboard> {
+        if let Some(existing) = {
+            let guard = self.clipboard.lock().await;
+            guard.clone()
+        } {
+            return Ok(existing);
+        }
+
+        let clipboard = match spawn_blocking(Clipboard::new).await {
+            Ok(Ok(clipboard)) => clipboard,
+            Ok(Err(error)) => {
+                warn!("Failed to initialize clipboard: {error}");
+                return Err(anyhow::anyhow!("Failed to initialize clipboard: {error}"));
+            }
+            Err(error) => {
+                warn!("Clipboard init task failed: {error}");
+                return Err(anyhow::anyhow!("Clipboard init task failed: {error}"));
+            }
+        };
+
+        let handle = SharedClipboard::new(clipboard);
+        let mut guard = self.clipboard.lock().await;
+        if let Some(existing) = guard.as_ref() {
+            return Ok(existing.clone());
+        }
+        *guard = Some(handle.clone());
+        Ok(handle)
+    }
+
+    async fn clear_clipboard_handle(&self) {
+        self.clipboard.lock().await.take();
+    }
+}
+
+#[async_trait]
+impl ClipboardAdapter for SystemClipboard {
+    async fn set_text(&self, text: String) -> anyhow::Result<()> {
+        let clipboard = self.clipboard_handle().await?;
+        let result = spawn_blocking(move || -> Result<(), arboard::Error> {
+            let mut guard = clipboard.lock()?;
+            guard.set_text(text)
+        })
+        .await;
+
+        match result {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(error)) => {
+                warn!("Failed to copy variable to clipboard: {error}");
+                self.clear_clipboard_handle().await;
+                Err(anyhow::anyhow!(
+                    "Failed to copy variable to clipboard: {error}"
+                ))
+            }
+            Err(error) => {
+                warn!("Clipboard task failed: {error}");
+                self.clear_clipboard_handle().await;
+                Err(anyhow::anyhow!("Clipboard task failed: {error}"))
+            }
+        }
+    }
+}
+
 pub struct AzureApiVariableGroupsClient {
     client: variablegroups::Client,
 }
@@ -99,20 +172,36 @@ impl VariableGroupsClient for AzureApiVariableGroupsClient {
     }
 }
 
-pub struct StateStore<C: VariableGroupsClient> {
+pub struct StateStore<C: VariableGroupsClient, B: ClipboardAdapter = SystemClipboard> {
     var_groups_client: C,
     state: State,
     state_tx: Sender<State>,
-    clipboard: AsyncMutex<Option<SharedClipboard>>,
+    clipboard: B,
 }
 
-impl<C: VariableGroupsClient> StateStore<C> {
+impl<C: VariableGroupsClient> StateStore<C, SystemClipboard> {
     pub fn new(state: State, state_tx: Sender<State>, var_groups_client: C) -> Self {
+        Self::with_clipboard(
+            state,
+            state_tx,
+            var_groups_client,
+            SystemClipboard::default(),
+        )
+    }
+}
+
+impl<C: VariableGroupsClient, B: ClipboardAdapter> StateStore<C, B> {
+    pub fn with_clipboard(
+        state: State,
+        state_tx: Sender<State>,
+        var_groups_client: C,
+        clipboard: B,
+    ) -> Self {
         Self {
             state_tx,
             var_groups_client,
             state,
-            clipboard: AsyncMutex::new(None),
+            clipboard,
         }
     }
 
@@ -154,55 +243,16 @@ impl<C: VariableGroupsClient> StateStore<C> {
                 }
                 Action::SearchInsertChar { ch } => {
                     assert!(self.state.ui.search.is_active());
-                    if let Some(target) = self.state.ui.search.active_target() {
-                        match target {
-                            SearchTarget::Groups => {
-                                self.state.ui.search.groups_query_mut().push(ch);
-                                self.state.invalidate_group_cache();
-                                self.apply_search_selection(SearchTarget::Groups);
-                            }
-                            SearchTarget::Vars => {
-                                if let Some(group_idx) = self.state.vars_group_idx() {
-                                    let query = self.state.ui.search.vars_query_mut(group_idx);
-                                    query.push(ch);
-                                    self.state.invalidate_var_cache();
-                                    self.apply_search_selection(SearchTarget::Vars);
-                                }
-                            }
-                        }
-                    }
+                    self.state.insert_search_char(ch);
                 }
                 Action::SearchBackspace => {
                     assert!(self.state.ui.search.is_active());
-                    if let Some(target) = self.state.ui.search.active_target() {
-                        match target {
-                            SearchTarget::Groups => {
-                                let query = self.state.ui.search.groups_query_mut();
-                                query.pop();
-                                self.state.invalidate_group_cache();
-                                self.apply_search_selection(SearchTarget::Groups);
-                            }
-                            SearchTarget::Vars => {
-                                if let Some(group_idx) = self.state.vars_group_idx() {
-                                    let should_remove = {
-                                        let query = self.state.ui.search.vars_query_mut(group_idx);
-                                        query.pop();
-                                        query.is_empty()
-                                    };
-                                    if should_remove {
-                                        self.state.ui.search.clear_vars_query(group_idx);
-                                    }
-                                    self.state.invalidate_var_cache();
-                                    self.apply_search_selection(SearchTarget::Vars);
-                                }
-                            }
-                        }
-                    }
+                    self.state.backspace_search();
                 }
                 Action::SubmitSearch => {
                     assert!(self.state.ui.search.is_active());
                     if let Some(target) = self.state.ui.search.active_target() {
-                        self.apply_search_selection(target);
+                        self.state.sync_search_selection(target);
                     }
                     self.state.ui.search.deactivate();
                 }
@@ -211,17 +261,9 @@ impl<C: VariableGroupsClient> StateStore<C> {
                     if index >= self.state.groups().len() {
                         continue;
                     }
-                    let (selected_var_idx, group_name) = {
-                        let group = &self.state.groups()[index];
-                        (
-                            if group.variables.is_empty() {
-                                None
-                            } else {
-                                Some(0)
-                            },
-                            group.name.clone(),
-                        )
-                    };
+                    let group_name = self.state.groups()[index].name.clone();
+                    let selected_var_idx =
+                        self.state.filtered_var_indices_for(index).first().copied();
                     self.state.ui.view = View::Vars {
                         group_idx: index,
                         selected_var_idx,
@@ -233,6 +275,7 @@ impl<C: VariableGroupsClient> StateStore<C> {
                     assert!(self.state.is_viewing_vars());
                     let selected_idx = self.state.current_group_idx();
                     self.state.ui.view = View::Groups { selected_idx };
+                    self.state.sync_selection();
                     self.state.ui.search.deactivate();
                 }
                 Action::ToggleTheme => {
@@ -242,9 +285,20 @@ impl<C: VariableGroupsClient> StateStore<C> {
                     self.copy_selected_var().await;
                 }
                 Action::ExportCurrentGroup => {
-                    if let Err(error) = self.export_current_group(Option::<String>::None) {
-                        eprintln!("Failed to export variable group: {error}");
-                        continue;
+                    match self.export_current_group(Option::<PathBuf>::None) {
+                        Ok(path) => {
+                            info!("Exported variable group to {}", path.display());
+                            self.state.ui.set_status(StatusMessage::info(format!(
+                                "Exported variable group to {}",
+                                path.display()
+                            )));
+                        }
+                        Err(error) => {
+                            warn!("Failed to export variable group: {error}");
+                            self.state.ui.set_status(StatusMessage::error(format!(
+                                "Failed to export variable group: {error}"
+                            )));
+                        }
                     };
                 }
                 Action::MoveSelectionUp => {
@@ -287,92 +341,45 @@ impl<C: VariableGroupsClient> StateStore<C> {
         };
     }
 
-    fn export_current_group(&self, path: Option<impl Into<PathBuf>>) -> anyhow::Result<()> {
-        let group = self
+    fn export_current_group(&self, path: Option<PathBuf>) -> anyhow::Result<PathBuf> {
+        let mut group = self
             .state
             .current_group()
+            .cloned()
             .ok_or_else(|| anyhow::anyhow!("No variable group selected to export"))?;
+        for variable in &mut group.variables {
+            if variable.is_secret {
+                variable.value = "<secret value hidden>".to_string();
+            }
+        }
         let path = path
-            .map(Into::into)
             .unwrap_or_else(|| format!("{}_variables.json", group.name.replace(' ', "_")).into());
         let json = serde_json::to_string_pretty(&group)?;
-        fs::write(path, json)?;
-        Ok(())
+        fs::write(&path, json)?;
+        Ok(path)
     }
 
     async fn copy_selected_var(&mut self) {
         let Some(var) = self.state.current_var() else {
+            self.state
+                .ui
+                .set_status(StatusMessage::error("No variable selected to copy"));
             return;
         };
         let text = format!("{}={}", var.name, var.value);
-        if text.is_empty() {
-            return;
-        }
         info!("Copying selected variable to clipboard");
-        let clipboard = match self.clipboard_handle().await {
-            Ok(handle) => handle,
-            Err(message) => {
-                self.state.ui.set_status(StatusMessage::error(message));
-                return;
-            }
-        };
-        let payload = text;
-        match spawn_blocking(move || -> Result<(), arboard::Error> {
-            let mut guard = clipboard.lock()?;
-            guard.set_text(payload)
-        })
-        .await
-        {
-            Ok(Ok(())) => {}
-            Ok(Err(err)) => {
-                warn!("Failed to copy variable to clipboard: {err}");
+        match self.clipboard.set_text(text).await {
+            Ok(()) => self
+                .state
+                .ui
+                .set_status(StatusMessage::info("Copied variable to clipboard")),
+            Err(error) => {
+                warn!("Failed to copy variable to clipboard: {error}");
                 self.state.ui.set_status(StatusMessage::error(format!(
-                    "Failed to copy variable to clipboard: {err}"
+                    "Failed to copy variable to clipboard: {error}"
                 )));
-                self.clear_clipboard_handle().await;
-            }
-            Err(err) => {
-                warn!("Clipboard task failed: {err}");
-                self.state.ui.set_status(StatusMessage::error(format!(
-                    "Clipboard task failed: {err}"
-                )));
-                self.clear_clipboard_handle().await;
             }
         }
-    }
-
-    async fn clipboard_handle(&self) -> Result<SharedClipboard, String> {
-        if let Some(existing) = {
-            let guard = self.clipboard.lock().await;
-            guard.clone()
-        } {
-            return Ok(existing);
-        }
-
-        let clipboard = match spawn_blocking(Clipboard::new).await {
-            Ok(Ok(cb)) => cb,
-            Ok(Err(err)) => {
-                warn!("Failed to initialize clipboard: {err}");
-                return Err(format!("Failed to initialize clipboard: {err}"));
-            }
-            Err(err) => {
-                warn!("Clipboard init task failed: {err}");
-                return Err(format!("Clipboard init task failed: {err}"));
-            }
-        };
-
-        let handle = SharedClipboard::new(clipboard);
-        let mut guard = self.clipboard.lock().await;
-        if let Some(existing) = guard.as_ref() {
-            return Ok(existing.clone());
-        }
-        *guard = Some(handle.clone());
-        Ok(handle)
-    }
-
-    async fn clear_clipboard_handle(&self) {
-        let mut guard = self.clipboard.lock().await;
-        guard.take();
     }
 
     fn move_selection(&mut self, delta: isize) {
@@ -407,46 +414,6 @@ impl<C: VariableGroupsClient> StateStore<C> {
         let next =
             (current_position as isize + delta).clamp(0, (filtered.len() - 1) as isize) as usize;
         *selected_idx = Some(filtered[next]);
-    }
-
-    fn apply_search_selection(&mut self, target: SearchTarget) {
-        match target {
-            SearchTarget::Groups => {
-                let next = self.state.filtered_group_indices().first().copied();
-                match next {
-                    Some(idx) => {
-                        let first_var = self.state.filtered_var_indices_for(idx).first().copied();
-                        match &mut self.state.ui.view {
-                            View::Groups { selected_idx } => {
-                                *selected_idx = Some(idx);
-                            }
-                            View::Vars {
-                                group_idx,
-                                selected_var_idx,
-                            } => {
-                                *group_idx = idx;
-                                *selected_var_idx = first_var;
-                            }
-                        }
-                    }
-                    None => {
-                        self.state.ui.view = View::Groups { selected_idx: None };
-                    }
-                }
-            }
-            SearchTarget::Vars => {
-                let Some(group_idx) = self.state.vars_group_idx() else {
-                    return;
-                };
-                let filtered = self.state.filtered_var_indices_for(group_idx);
-                if let View::Vars {
-                    selected_var_idx, ..
-                } = &mut self.state.ui.view
-                {
-                    *selected_var_idx = filtered.first().copied();
-                }
-            }
-        }
     }
 
     async fn fetch_var_groups(&mut self) -> anyhow::Result<Vec<VarGroup>> {
@@ -504,6 +471,43 @@ mod tests {
             name: name.to_string(),
             variables: vars,
         }
+    }
+
+    struct TestClipboard {
+        result: Result<(), String>,
+        copied: Arc<Mutex<Vec<String>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl ClipboardAdapter for TestClipboard {
+        async fn set_text(&self, text: String) -> anyhow::Result<()> {
+            self.copied.lock().unwrap().push(text);
+            self.result
+                .as_ref()
+                .map(|_| ())
+                .map_err(|error| anyhow::anyhow!("{error}"))
+        }
+    }
+
+    async fn run_action<B: ClipboardAdapter + 'static>(
+        state: State,
+        clipboard: B,
+        action: Action,
+    ) -> State {
+        let (state_tx, mut state_rx) = tokio::sync::mpsc::channel(8);
+        let store = StateStore::with_clipboard(state, state_tx, MockVarClient::new(), clipboard);
+        let (action_tx, action_rx) = tokio::sync::mpsc::channel(2);
+        let main_loop = tokio::spawn(store.main_loop(action_rx));
+
+        action_tx.send(action).await.unwrap();
+        drop(action_tx);
+        main_loop.await.unwrap();
+
+        let mut latest = None;
+        while let Some(state) = state_rx.recv().await {
+            latest = Some(state);
+        }
+        latest.expect("action should emit a state")
     }
 
     #[test]
@@ -602,7 +606,7 @@ mod tests {
                 sample_var("key", "value"),
                 VarEntry {
                     name: "secret".to_string(),
-                    value: "<secret value hidden>".to_string(),
+                    value: "should never be exported".to_string(),
                     is_secret: true,
                 },
             ],
@@ -621,8 +625,218 @@ mod tests {
             .expect("export should succeed");
 
         let contents = fs::read_to_string(&export_path).expect("exported file readable");
-        let expected = serde_json::to_string_pretty(&group).unwrap();
+        let mut expected_group = group;
+        expected_group.variables[1].value = "<secret value hidden>".to_string();
+        let expected = serde_json::to_string_pretty(&expected_group).unwrap();
         assert_eq!(contents, expected);
+    }
+
+    #[tokio::test]
+    async fn group_search_filters_matches_and_clears_selection_for_no_results() {
+        let mut state = State::new("org".to_string(), "project".to_string());
+        state.set_groups(vec![
+            sample_group("Alpha Team", vec![]),
+            sample_group("Beta Team", vec![]),
+        ]);
+        state.ui.view = View::Groups {
+            selected_idx: Some(1),
+        };
+        let (state_tx, mut state_rx) = tokio::sync::mpsc::channel(32);
+        let store = StateStore::new(state, state_tx, MockVarClient::new());
+        let (action_tx, action_rx) = tokio::sync::mpsc::channel(16);
+        let main_loop = tokio::spawn(store.main_loop(action_rx));
+
+        action_tx.send(Action::EnterSearchMode).await.unwrap();
+        for ch in "alpha".chars() {
+            action_tx
+                .send(Action::SearchInsertChar { ch })
+                .await
+                .unwrap();
+        }
+        action_tx
+            .send(Action::SearchInsertChar { ch: 'z' })
+            .await
+            .unwrap();
+        action_tx.send(Action::SearchBackspace).await.unwrap();
+        action_tx.send(Action::ExitSearchMode).await.unwrap();
+        action_tx.send(Action::MoveSelectionDown).await.unwrap();
+        drop(action_tx);
+        main_loop.await.unwrap();
+
+        let mut states = Vec::new();
+        while let Some(state) = state_rx.recv().await {
+            states.push(state);
+        }
+
+        let no_match_state = &states[6];
+        assert_eq!(no_match_state.ui.search.groups_query(), "alphaz");
+        assert!(no_match_state.filtered_group_indices().is_empty());
+        assert_eq!(no_match_state.current_group(), None);
+
+        let final_state = states.last().expect("state updates should exist");
+        assert_eq!(final_state.ui.search.groups_query(), "alpha");
+        assert_eq!(final_state.filtered_group_indices(), vec![0]);
+        assert_eq!(
+            final_state.current_group().map(|group| group.name.as_str()),
+            Some("Alpha Team")
+        );
+        assert!(!final_state.ui.search.is_active());
+    }
+
+    #[tokio::test]
+    async fn copy_reports_success_and_failure_through_status() {
+        let copied = Arc::new(Mutex::new(Vec::new()));
+        let mut state = State::new("org".to_string(), "project".to_string());
+        state.set_groups(vec![sample_group(
+            "Vars",
+            vec![sample_var("endpoint", "https://example.test")],
+        )]);
+        state.ui.view = View::Vars {
+            group_idx: 0,
+            selected_var_idx: Some(0),
+        };
+        let success = run_action(
+            state.clone(),
+            TestClipboard {
+                result: Ok(()),
+                copied: Arc::clone(&copied),
+            },
+            Action::CopySelectedVar,
+        )
+        .await;
+        assert_eq!(
+            copied.lock().unwrap().as_slice(),
+            &[String::from("endpoint=https://example.test")]
+        );
+        assert!(matches!(
+            &success.ui.status,
+            Some(StatusMessage {
+                kind: StatusKind::Info,
+                ..
+            })
+        ));
+
+        let failure = run_action(
+            state,
+            TestClipboard {
+                result: Err("clipboard unavailable".to_string()),
+                copied: Arc::new(Mutex::new(Vec::new())),
+            },
+            Action::CopySelectedVar,
+        )
+        .await;
+        assert!(matches!(
+            &failure.ui.status,
+            Some(StatusMessage {
+                kind: StatusKind::Error,
+                ..
+            })
+        ));
+        assert!(
+            failure
+                .ui
+                .status
+                .as_ref()
+                .is_some_and(|status| status.text.contains("clipboard unavailable"))
+        );
+    }
+
+    #[tokio::test]
+    async fn copy_without_a_selected_variable_reports_an_error() {
+        let state = State::new("org".to_string(), "project".to_string());
+        let final_state = run_action(
+            state,
+            TestClipboard {
+                result: Ok(()),
+                copied: Arc::new(Mutex::new(Vec::new())),
+            },
+            Action::CopySelectedVar,
+        )
+        .await;
+        assert!(matches!(
+            &final_state.ui.status,
+            Some(StatusMessage {
+                kind: StatusKind::Error,
+                ..
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn export_reports_success_and_failure_through_status() {
+        let dir = tempdir().unwrap();
+        let group_name = dir.path().join("Group").to_string_lossy().to_string();
+        let mut state = State::new("org".to_string(), "project".to_string());
+        state.set_groups(vec![sample_group(
+            &group_name,
+            vec![sample_var("key", "value")],
+        )]);
+        state.ui.view = View::Groups {
+            selected_idx: Some(0),
+        };
+        let success = run_action(
+            state,
+            TestClipboard {
+                result: Ok(()),
+                copied: Arc::new(Mutex::new(Vec::new())),
+            },
+            Action::ExportCurrentGroup,
+        )
+        .await;
+
+        let export_path = PathBuf::from(format!("{group_name}_variables.json"));
+        assert!(export_path.exists());
+        assert!(matches!(
+            &success.ui.status,
+            Some(StatusMessage {
+                kind: StatusKind::Info,
+                ..
+            })
+        ));
+
+        let missing_parent = dir
+            .path()
+            .join("missing/Group")
+            .to_string_lossy()
+            .to_string();
+        let mut state = State::new("org".to_string(), "project".to_string());
+        state.set_groups(vec![sample_group(&missing_parent, vec![])]);
+        state.ui.view = View::Groups {
+            selected_idx: Some(0),
+        };
+        let failure = run_action(
+            state,
+            TestClipboard {
+                result: Ok(()),
+                copied: Arc::new(Mutex::new(Vec::new())),
+            },
+            Action::ExportCurrentGroup,
+        )
+        .await;
+        assert!(matches!(
+            &failure.ui.status,
+            Some(StatusMessage {
+                kind: StatusKind::Error,
+                ..
+            })
+        ));
+
+        let no_selection = run_action(
+            State::new("org".to_string(), "project".to_string()),
+            TestClipboard {
+                result: Ok(()),
+                copied: Arc::new(Mutex::new(Vec::new())),
+            },
+            Action::ExportCurrentGroup,
+        )
+        .await;
+        assert!(matches!(
+            &no_selection.ui.status,
+            Some(StatusMessage {
+                kind: StatusKind::Error,
+                ..
+            })
+        ));
     }
 
     #[tokio::test]
@@ -724,7 +938,12 @@ mod tests {
 
     #[tokio::test]
     async fn refresh_failures_update_status_and_success_clears() {
-        let initial_state = State::new("org".to_string(), "project".to_string());
+        let mut initial_state = State::new("org".to_string(), "project".to_string());
+        let original_groups = vec![sample_group(
+            "Previously loaded",
+            vec![sample_var("old", "snapshot")],
+        )];
+        initial_state.set_groups(original_groups.clone());
         let desired_groups = vec![sample_group(
             "Recovered",
             vec![sample_var("alpha", "1"), sample_var("beta", "2")],
@@ -768,12 +987,13 @@ mod tests {
         main_loop.await.unwrap();
         let states = collector.await.unwrap();
 
-        assert!(
-            states
-                .iter()
-                .any(|state| matches!(&state.ui.status, Some(status) if status.text.contains("Failed to load variable groups"))),
-            "expected at least one state with an error status",
-        );
+        let failure_state = states
+            .iter()
+            .find(|state| {
+                matches!(&state.ui.status, Some(status) if status.text.contains("Failed to load variable groups"))
+            })
+            .expect("expected an error status after refresh failure");
+        assert_eq!(failure_state.data.groups, original_groups);
 
         let final_state = states.last().expect("state updates should exist");
         assert_eq!(final_state.data.groups, desired_groups);

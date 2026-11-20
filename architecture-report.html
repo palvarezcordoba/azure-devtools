@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Azure DevTools — New Architecture Report</title>
+  <style>
+    :root {
+      --ink: #172033; --muted: #607089; --paper: #f6f8fc; --panel: #fff;
+      --line: #dfe6f1; --blue: #2563eb; --cyan: #0891b2; --green: #16803a;
+      --amber: #b45309; --red: #b91c1c; --violet: #7c3aed;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 16px/1.55 Inter, ui-sans-serif, system-ui, -apple-system, sans-serif; color: var(--ink); background: var(--paper); }
+    header { background: linear-gradient(135deg,#172033,#24365a); color:white; padding:48px max(24px,calc((100% - 1120px)/2)); }
+    header h1 { margin:0 0 8px; font-size:38px; letter-spacing:-.03em; }
+    header p { margin:0; color:#cad5e8; max-width:760px; }
+    main { max-width:1120px; margin:32px auto 64px; padding:0 24px; }
+    section { background:var(--panel); border:1px solid var(--line); border-radius:14px; margin:18px 0; padding:26px; box-shadow:0 8px 24px rgba(23,32,51,.04); }
+    h2 { margin:0 0 16px; font-size:24px; }
+    h3 { margin:20px 0 8px; font-size:17px; }
+    p { margin:8px 0; }
+    code { background:#edf2f8; border-radius:5px; padding:2px 5px; color:#263650; }
+    ul { margin:8px 0 8px 20px; }
+    li { margin:5px 0; }
+    .grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
+    .grid-3 { grid-template-columns:repeat(3,minmax(0,1fr)); }
+    .card { border:1px solid var(--line); border-radius:10px; padding:16px; background:#fbfcfe; }
+    .card strong { display:block; margin-bottom:5px; }
+    .tag { display:inline-block; border-radius:999px; padding:3px 9px; font-size:12px; font-weight:700; background:#e8efff; color:#2452a7; margin-right:5px; }
+    .tag.green { background:#dff4e7; color:#16743b; }
+    .tag.amber { background:#fff0d5; color:#95520a; }
+    .tag.red { background:#fde4e4; color:#9e1d1d; }
+    .flow { display:flex; align-items:center; justify-content:center; gap:10px; flex-wrap:wrap; }
+    .node { border:1.5px solid var(--blue); background:#f7faff; border-radius:9px; padding:12px 14px; min-width:140px; text-align:center; font-weight:650; }
+    .node.state { border-color:var(--violet); }
+    .node.data { border-color:var(--cyan); }
+    .node.ui { border-color:var(--green); }
+    .node.ext { border-color:var(--amber); }
+    .arrow { color:var(--muted); font-weight:bold; }
+    .diagram { width:100%; margin:12px 0 4px; border:1px solid var(--line); border-radius:10px; background:#fcfdff; }
+    .lane { display:grid; grid-template-columns:190px 1fr; border-top:1px solid var(--line); }
+    .lane:first-child { border-top:0; }
+    .lane b { padding:12px; border-right:1px solid var(--line); background:#f5f7fb; }
+    .lane span { padding:12px; }
+    .metric { font-size:28px; font-weight:800; color:var(--blue); }
+    footer { max-width:1120px; margin:0 auto 40px; padding:0 24px; color:var(--muted); font-size:13px; }
+    @media (max-width:760px) { .grid,.grid-3 { grid-template-columns:1fr; } .lane { grid-template-columns:130px 1fr; } header h1 { font-size:30px; } }
+  </style>
+</head>
+<body>
+<header>
+  <h1>Azure DevTools</h1>
+  <p>Architecture report for the search, operation feedback, and list-rendering redesign</p>
+</header>
+
+<main>
+  <section>
+    <h2>Static Rust public API analysis</h2>
+    <p>The Rust interface and public-module listing is now backed by <code>cargo-public-api</code> output rather than a hand-drawn architecture diagram. <a href="rust-public-api-report.html">Open the generated public API report</a> for the derived module tree, exact analyzer output, counts, and extraction provenance.</p>
+    <p class="note">This analysis covers the public Rust surface; it does not infer internal dependency edges or runtime behavior.</p>
+  </section>
+
+  <section>
+    <h2>Executive summary</h2>
+    <p>The implementation keeps the existing terminal workflow and Azure DevOps scope, but moves the rules for queries, filtering, selection, refresh preservation, and status feedback into the state/action flow.</p>
+    <div class="grid grid-3">
+      <div class="card"><span class="tag">State owner</span><strong>One source of truth</strong>Queries and selection updates are reconciled before the state snapshot is emitted.</div>
+      <div class="card"><span class="tag green">Filtering</span><strong>Ranked, non-matching removal</strong>Both search modes now use fuzzy scores and return only matches.</div>
+      <div class="card"><span class="tag amber">Adapters</span><strong>Small external seams</strong>The Azure client and operating-system clipboard remain replaceable for tests.</div>
+    </div>
+  </section>
+
+  <section>
+    <h2>System architecture</h2>
+    <img class="diagram" src="architecture-diagram.svg" alt="Graphviz-generated Azure DevTools runtime architecture diagram">
+    <p>Generated deterministically with Graphviz 3.31.0 (WASM), <code>dot</code> engine. <a href="architecture-diagram.dot">View the DOT source</a> to inspect or regenerate the diagram.</p>
+  </section>
+
+  <section>
+    <h2>Module coupling — manual baseline</h2>
+    <img class="diagram" src="coupling-manual.svg" alt="Graphviz module dependency graph with direct fan-in and fan-out counts">
+    <p>This first-pass coupling graph is compiled manually from the current Rust module imports. Arrows mean “depends on”; edge labels show the imported symbol groups. Each node’s fan-in and fan-out counts distinct internal modules, not import statements or external crates.</p>
+    <p>The <code>state</code> module is the most depended-on module in this slice (fan-in 5) and is also a leaf in the internal dependency graph. This is expected for shared domain/UI state, but it is a useful candidate to inspect for interface breadth. The visualization does not infer type-level coupling, call frequency, or dependency cycles beyond the edges shown.</p>
+    <p><a href="coupling-manual.dot">View coupling DOT source</a> · For analyzer-derived public module structure and interface entries, see the <a href="rust-public-api-report.html">Rust public API report</a>. That output does not infer dependency edges.</p>
+  </section>
+
+  <section>
+    <h2>Module structure and responsibility</h2>
+    <div class="lane"><b>State</b><span>Owns domain data, active view, search state, theme, status, filtering cache, and rank/selection reconciliation. It is the primary test seam for search and selection behavior.</span></div>
+    <div class="lane"><b>StateStore</b><span>Runs the action loop, translates actions into state operations, performs refresh/copy/export outcomes, and broadcasts state snapshots. It contains no presentation text for filtering or list rendering.</span></div>
+    <div class="lane"><b>draw_ui</b><span>Prepares terminal layout and supplies already-filtered entries plus selected row positions to widgets.</span></div>
+    <div class="lane"><b>List widgets</b><span>Render supplied rows, highlight by supplied position, and display “No matches” when a non-empty search has no results.</span></div>
+    <div class="lane"><b>Adapters</b><span>The Azure API client supplies remote data. The clipboard adapter separates operating-system behavior from deterministic tests.</span></div>
+  </section>
+
+  <section>
+    <h2>Search pipeline</h2>
+    <div class="flow">
+      <div class="node ui">Query edit</div><div class="arrow">→</div>
+      <div class="node state">Invalidate cache</div><div class="arrow">→</div>
+      <div class="node data">Fuzzy rank</div><div class="arrow">→</div>
+      <div class="node state">First match selected</div><div class="arrow">→</div>
+      <div class="node ui">Snapshot rendered</div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <h3>Variable Group search</h3>
+        <ul>
+          <li>Matches and ranks names only.</li>
+          <li>Non-matches are omitted.</li>
+          <li>The shared query remains after leaving search mode.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Variable Entry search</h3>
+        <ul>
+          <li>Matches names for every entry.</li>
+          <li>Matches visible values for non-secret entries.</li>
+          <li>Secret entries match names only, never their placeholder.</li>
+          <li>Each Variable Group has a query keyed by group name.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Selection and refresh reconciliation</h2>
+    <svg class="diagram" viewBox="0 0 1068 230" role="img" aria-label="Refresh selection preservation flow">
+      <rect x="24" y="48" width="180" height="96" rx="10" fill="#f9f7ff" stroke="#7c3aed" stroke-width="2"/>
+      <text x="114" y="78" text-anchor="middle" font-weight="700">Capture names</text>
+      <text x="114" y="106" text-anchor="middle" font-size="13" fill="#607089">selected group</text>
+      <text x="114" y="126" text-anchor="middle" font-size="13" fill="#607089">selected variable</text>
+      <rect x="294" y="48" width="180" height="96" rx="10" fill="#fffaf2" stroke="#b45309" stroke-width="2"/>
+      <text x="384" y="78" text-anchor="middle" font-weight="700">Refresh snapshot</text>
+      <text x="384" y="106" text-anchor="middle" font-size="13" fill="#607089">replace remote data</text>
+      <text x="384" y="126" text-anchor="middle" font-size="13" fill="#607089">keep snapshot on failure</text>
+      <rect x="564" y="48" width="180" height="96" rx="10" fill="#f7faff" stroke="#2563eb" stroke-width="2"/>
+      <text x="654" y="78" text-anchor="middle" font-weight="700">Preserve by name</text>
+      <text x="654" y="106" text-anchor="middle" font-size="13" fill="#607089">match if still available</text>
+      <text x="654" y="126" text-anchor="middle" font-size="13" fill="#607089">must belong to results</text>
+      <rect x="834" y="48" width="210" height="96" rx="10" fill="#f7fff9" stroke="#16803a" stroke-width="2"/>
+      <text x="939" y="78" text-anchor="middle" font-weight="700">Fallback</text>
+      <text x="939" y="106" text-anchor="middle" font-size="13" fill="#607089">first ranked match</text>
+      <text x="939" y="126" text-anchor="middle" font-size="13" fill="#607089">or no selection</text>
+      <path d="M204 96H294" stroke="#607089" stroke-width="2" marker-end="url(#arrow)"/>
+      <path d="M474 96H564" stroke="#607089" stroke-width="2" marker-end="url(#arrow)"/>
+      <path d="M744 96H834" stroke="#607089" stroke-width="2" marker-end="url(#arrow)"/>
+      <text x="534" y="175" text-anchor="middle" font-size="13" fill="#607089">No match → clear selection instead of retaining a hidden entry</text>
+    </svg>
+    <p>Refresh success clears a prior error status. Refresh failure leaves the previously loaded snapshot visible and adds an error status. Navigation never moves outside the filtered result indices.</p>
+  </section>
+
+  <section>
+    <h2>Operation feedback</h2>
+    <div class="grid">
+      <div class="card"><span class="tag green">Copy</span><strong>Success / failure</strong>The selected Variable Entry is copied as <code>name=value</code>. Success and clipboard errors appear in the status area; no selection also produces a clear error.</div>
+      <div class="card"><span class="tag green">Export</span><strong>Success / failure</strong>The selected Variable Group is written as pretty-printed JSON. Export success and filesystem errors appear in the status area.</div>
+      <div class="card"><span class="tag red">Secret protection</span><strong>Redacted export</strong>Every secret <code>value</code> is replaced with <code>&lt;secret value hidden&gt;</code>, while <code>is_secret</code> remains in the JSON.</div>
+      <div class="card"><span class="tag amber">Refresh</span><strong>Non-destructive failure</strong>Remote failure preserves the in-memory snapshot and reports the error; success removes that error status.</div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Rendering seam</h2>
+    <div class="flow">
+      <div class="node state">State: filtered indices</div><div class="arrow">→</div>
+      <div class="node ui">draw_ui: filtered clones</div><div class="arrow">→</div>
+      <div class="node ui">draw_ui: row position</div><div class="arrow">→</div>
+      <div class="node">Ratatui list</div>
+    </div>
+    <p>The list widgets no longer compare whole domain entries to locate the selected row. This removes clone equality as a selection mechanism and makes duplicate or reordered entries unambiguous.</p>
+    <div class="grid">
+      <div class="card"><strong>When results exist</strong>The selected position is converted from a domain index to a position in the filtered list.</div>
+      <div class="card"><strong>When no results exist</strong>The widget receives no row position and renders an explicit “No matches” message for an active search.</div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Testing strategy and current evidence</h2>
+    <div class="grid">
+      <div class="card"><span class="tag">State and actions</span><strong>External behavior</strong>Tests drive the action loop and inspect emitted state snapshots rather than private filter-cache internals.</div>
+      <div class="card"><span class="tag green">Terminal</span><strong>Ratatui test backend</strong>Widgets verify selected-row placement and “No matches” output.</div>
+      <div class="card"><span class="tag amber">Remote data</span><strong>Mock VariableGroupsClient</strong>Refresh success/failure, snapshot retention, and status clearing are verified through the existing remote seam.</div>
+      <div class="card"><span class="tag red">Output</span><strong>Fake clipboard + temp directory</strong>Copy outcomes and exported JSON are tested deterministically without desktop or permanent filesystem dependencies.</div>
+    </div>
+    <p style="margin-top:18px"><span class="metric">28</span> library tests passed in the implementation verification. Formatting and whitespace checks also passed.</p>
+  </section>
+
+  <section>
+    <h2>Architectural trade-offs</h2>
+    <div class="grid">
+      <div class="card"><strong>Depth gained</strong>One State interface owns query, filtering, cache, and selection coordination. Callers no longer mutate these concerns piecemeal.</div>
+      <div class="card"><strong>New adapter justified</strong>The clipboard has both a production implementation and a test adapter, so it is a real seam rather than generic indirection.</div>
+      <div class="card"><strong>Locality preserved</strong>Filtering rules concentrate in State; operation outcomes concentrate in StateStore; presentation rules remain in Ratatui modules.</div>
+      <div class="card"><strong>Scope kept narrow</strong>No editing, persistence, generic effects framework, filesystem abstraction, or CLI workflow changes were introduced.</div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  Generated for the Azure DevTools architecture-deepening implementation · 20 November 2026
+</footer>
+</body>
+</html>

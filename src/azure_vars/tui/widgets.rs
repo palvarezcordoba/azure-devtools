@@ -89,21 +89,36 @@ impl Widget for BreadCrumb {
 pub struct VarGroupList {
     groups: Vec<VarGroup>,
     theme: Theme,
-    selected: VarGroup,
+    search_query: String,
+    selected_position: Option<usize>,
 }
 
 impl VarGroupList {
-    pub fn new(groups: Vec<VarGroup>, theme: Theme, selected: VarGroup) -> Self {
+    pub fn new(
+        groups: Vec<VarGroup>,
+        theme: Theme,
+        search_query: String,
+        selected_position: Option<usize>,
+    ) -> Self {
         Self {
             groups,
             theme,
-            selected,
+            search_query,
+            selected_position,
         }
     }
 }
 
 impl Widget for VarGroupList {
     fn render(self, area: Rect, buf: &mut ratatui::prelude::Buffer) {
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title("Variable Groups");
+        if self.groups.is_empty() && !self.search_query.is_empty() {
+            Paragraph::new("No matches").block(block).render(area, buf);
+            return;
+        }
+
         let accent = match self.theme {
             Theme::Dark => Color::Yellow,
             Theme::Light => Color::Blue,
@@ -120,53 +135,59 @@ impl Widget for VarGroupList {
             .collect();
 
         let list = List::new(items)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title("Variable Groups"),
-            )
+            .block(block)
             .highlight_style(Style::default().fg(accent).add_modifier(Modifier::BOLD))
             .highlight_symbol(">> ");
 
-        let selected_idx = self
-            .groups
-            .iter()
-            .position(|g| g == &self.selected)
-            .unwrap_or(0);
-        let mut state = ratatui::widgets::ListState::default()
-            .with_selected(Some(selected_idx.min(self.groups.len().saturating_sub(1))));
+        let mut state =
+            ratatui::widgets::ListState::default().with_selected(self.selected_position);
         StatefulWidget::render(list, area, buf, &mut state);
     }
 }
 
 pub struct VarList {
-    vars: Vec<crate::azure_vars::state::state::VarEntry>,
+    vars: Vec<VarEntry>,
     group_name: String,
     search_query: Option<String>,
     theme: Theme,
-    selected: VarEntry,
+    selected_position: Option<usize>,
 }
 
 impl VarList {
     pub fn new(
-        vars: Vec<crate::azure_vars::state::state::VarEntry>,
+        vars: Vec<VarEntry>,
         group_name: String,
         search_query: Option<String>,
         theme: Theme,
-        selected: VarEntry,
+        selected_position: Option<usize>,
     ) -> Self {
         Self {
             vars,
             group_name,
             search_query,
             theme,
-            selected,
+            selected_position,
         }
     }
 }
 
 impl Widget for VarList {
     fn render(self, area: Rect, buf: &mut ratatui::prelude::Buffer) {
+        let title = format!(
+            "{} ({} vars{})",
+            self.group_name,
+            self.vars.len(),
+            self.search_query
+                .as_deref()
+                .map(|query| format!(", filter: '{query}'"))
+                .unwrap_or_default()
+        );
+        let block = Block::default().borders(Borders::ALL).title(title);
+        if self.vars.is_empty() && self.search_query.is_some() {
+            Paragraph::new("No matches").block(block).render(area, buf);
+            return;
+        }
+
         let accent = match self.theme {
             Theme::Dark => Color::Yellow,
             Theme::Light => Color::Blue,
@@ -196,30 +217,13 @@ impl Widget for VarList {
             })
             .collect();
 
-        let title = format!(
-            "{} ({} vars{})",
-            self.group_name,
-            self.vars.len(),
-            if let Some(query) = self.search_query {
-                format!(", filter: '{query}'")
-            } else {
-                "".into()
-            }
-        );
-
         let list = List::new(items)
-            .block(Block::default().borders(Borders::ALL).title(title))
+            .block(block)
             .highlight_style(Style::default().fg(accent).add_modifier(Modifier::BOLD))
             .highlight_symbol(">> ");
 
-        let selected_idx = self
-            .vars
-            .iter()
-            .position(|v| v == &self.selected)
-            .unwrap_or(0);
-
-        let mut state = ratatui::widgets::ListState::default()
-            .with_selected(Some(selected_idx.min(self.vars.len().saturating_sub(1))));
+        let mut state =
+            ratatui::widgets::ListState::default().with_selected(self.selected_position);
         StatefulWidget::render(list, area, buf, &mut state);
     }
 }
@@ -294,5 +298,90 @@ impl Widget for StatusBar {
             .style(Style::default().fg(color))
             .block(Block::default().borders(Borders::TOP))
             .render(area, buf);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::{Terminal, backend::TestBackend};
+
+    fn render(widget: impl Widget) -> String {
+        let backend = TestBackend::new(40, 5);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| frame.render_widget(widget, frame.area()))
+            .unwrap();
+
+        (0..5)
+            .map(|y| {
+                (0..40)
+                    .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn group_list_renders_selected_position_and_empty_search_message() {
+        let groups = vec![
+            VarGroup {
+                name: "Alpha".to_string(),
+                variables: Vec::new(),
+            },
+            VarGroup {
+                name: "Beta".to_string(),
+                variables: Vec::new(),
+            },
+        ];
+        let output = render(VarGroupList::new(
+            groups,
+            Theme::Dark,
+            String::new(),
+            Some(1),
+        ));
+        assert!(output.contains(">> Beta"));
+
+        let output = render(VarGroupList::new(
+            Vec::new(),
+            Theme::Dark,
+            "missing".into(),
+            None,
+        ));
+        assert!(output.contains("No matches"));
+    }
+
+    #[test]
+    fn variable_list_renders_selected_position_and_empty_search_message() {
+        let vars = vec![
+            VarEntry {
+                name: "alpha".to_string(),
+                value: "one".to_string(),
+                is_secret: false,
+            },
+            VarEntry {
+                name: "beta".to_string(),
+                value: "two".to_string(),
+                is_secret: false,
+            },
+        ];
+        let output = render(VarList::new(
+            vars,
+            "Group".to_string(),
+            None,
+            Theme::Dark,
+            Some(1),
+        ));
+        assert!(output.contains(">> beta"));
+
+        let output = render(VarList::new(
+            Vec::new(),
+            "Group".to_string(),
+            Some("missing".to_string()),
+            Theme::Dark,
+            None,
+        ));
+        assert!(output.contains("No matches"));
     }
 }

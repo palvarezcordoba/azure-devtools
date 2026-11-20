@@ -1,0 +1,166 @@
+pub mod azure_devtools
+pub mod azure_devtools::azure_vars
+pub mod azure_devtools::azure_vars::state
+pub mod azure_devtools::azure_vars::state::action
+pub enum azure_devtools::azure_vars::state::action::Action
+pub azure_devtools::azure_vars::state::action::Action::CopySelectedVar
+pub azure_devtools::azure_vars::state::action::Action::EnterSearchMode
+pub azure_devtools::azure_vars::state::action::Action::EnterViewVarGroup
+pub azure_devtools::azure_vars::state::action::Action::EnterViewVarGroup::index: usize
+pub azure_devtools::azure_vars::state::action::Action::ExitSearchMode
+pub azure_devtools::azure_vars::state::action::Action::ExitViewVarGroup
+pub azure_devtools::azure_vars::state::action::Action::ExportCurrentGroup
+pub azure_devtools::azure_vars::state::action::Action::MoveSelectionBottom
+pub azure_devtools::azure_vars::state::action::Action::MoveSelectionDown
+pub azure_devtools::azure_vars::state::action::Action::MoveSelectionPageDown
+pub azure_devtools::azure_vars::state::action::Action::MoveSelectionPageUp
+pub azure_devtools::azure_vars::state::action::Action::MoveSelectionTop
+pub azure_devtools::azure_vars::state::action::Action::MoveSelectionUp
+pub azure_devtools::azure_vars::state::action::Action::RefreshVarGroups
+pub azure_devtools::azure_vars::state::action::Action::SearchBackspace
+pub azure_devtools::azure_vars::state::action::Action::SearchInsertChar
+pub azure_devtools::azure_vars::state::action::Action::SearchInsertChar::ch: char
+pub azure_devtools::azure_vars::state::action::Action::SubmitSearch
+pub azure_devtools::azure_vars::state::action::Action::ToggleTheme
+pub mod azure_devtools::azure_vars::state::state
+pub enum azure_devtools::azure_vars::state::state::SearchStatus
+pub azure_devtools::azure_vars::state::state::SearchStatus::Active(azure_devtools::azure_vars::state::state::SearchTarget)
+pub azure_devtools::azure_vars::state::state::SearchStatus::Inactive
+pub enum azure_devtools::azure_vars::state::state::SearchTarget
+pub azure_devtools::azure_vars::state::state::SearchTarget::Groups
+pub azure_devtools::azure_vars::state::state::SearchTarget::Vars
+pub enum azure_devtools::azure_vars::state::state::StatusKind
+pub azure_devtools::azure_vars::state::state::StatusKind::Error
+pub azure_devtools::azure_vars::state::state::StatusKind::Info
+pub enum azure_devtools::azure_vars::state::state::Theme
+pub azure_devtools::azure_vars::state::state::Theme::Dark
+pub azure_devtools::azure_vars::state::state::Theme::Light
+pub enum azure_devtools::azure_vars::state::state::View
+pub azure_devtools::azure_vars::state::state::View::Groups
+pub azure_devtools::azure_vars::state::state::View::Groups::selected_idx: core::option::Option<usize>
+pub azure_devtools::azure_vars::state::state::View::Vars
+pub azure_devtools::azure_vars::state::state::View::Vars::group_idx: usize
+pub azure_devtools::azure_vars::state::state::View::Vars::selected_var_idx: core::option::Option<usize>
+impl azure_devtools::azure_vars::state::state::View
+pub fn azure_devtools::azure_vars::state::state::View::is_vars(&self) -> bool
+impl core::default::Default for azure_devtools::azure_vars::state::state::View
+pub fn azure_devtools::azure_vars::state::state::View::default() -> Self
+pub struct azure_devtools::azure_vars::state::state::AppData
+pub azure_devtools::azure_vars::state::state::AppData::groups: alloc::vec::Vec<azure_devtools::azure_vars::state::state::VarGroup>
+impl azure_devtools::azure_vars::state::state::AppData
+pub fn azure_devtools::azure_vars::state::state::AppData::new(alloc::string::String, alloc::string::String) -> Self
+pub struct azure_devtools::azure_vars::state::state::SearchState
+pub azure_devtools::azure_vars::state::state::SearchState::groups_query: alloc::string::String
+pub azure_devtools::azure_vars::state::state::SearchState::status: azure_devtools::azure_vars::state::state::SearchStatus
+impl azure_devtools::azure_vars::state::state::SearchState
+pub fn azure_devtools::azure_vars::state::state::SearchState::active_target(&self) -> core::option::Option<azure_devtools::azure_vars::state::state::SearchTarget>
+pub fn azure_devtools::azure_vars::state::state::SearchState::groups_query(&self) -> &str
+pub fn azure_devtools::azure_vars::state::state::SearchState::is_active(&self) -> bool
+pub fn azure_devtools::azure_vars::state::state::SearchState::vars_query(&self, &str) -> &str
+pub struct azure_devtools::azure_vars::state::state::State
+pub azure_devtools::azure_vars::state::state::State::data: azure_devtools::azure_vars::state::state::AppData
+pub azure_devtools::azure_vars::state::state::State::matcher: fuzzy_matcher::skim::SkimMatcherV2
+pub azure_devtools::azure_vars::state::state::State::theme: azure_devtools::azure_vars::state::state::Theme
+pub azure_devtools::azure_vars::state::state::State::ui: azure_devtools::azure_vars::state::state::UiState
+impl azure_devtools::azure_vars::state::state::State
+pub fn azure_devtools::azure_vars::state::state::State::active_vars_query(&self) -> core::option::Option<&str>
+pub fn azure_devtools::azure_vars::state::state::State::current_group(&self) -> core::option::Option<&azure_devtools::azure_vars::state::state::VarGroup>
+pub fn azure_devtools::azure_vars::state::state::State::current_group_idx(&self) -> core::option::Option<usize>
+pub fn azure_devtools::azure_vars::state::state::State::current_var(&self) -> core::option::Option<&azure_devtools::azure_vars::state::state::VarEntry>
+pub fn azure_devtools::azure_vars::state::state::State::filtered_group_indices(&self) -> alloc::vec::Vec<usize>
+pub fn azure_devtools::azure_vars::state::state::State::filtered_groups(&self) -> alloc::vec::Vec<&azure_devtools::azure_vars::state::state::VarGroup>
+pub fn azure_devtools::azure_vars::state::state::State::filtered_var_indices(&self) -> alloc::vec::Vec<usize>
+pub fn azure_devtools::azure_vars::state::state::State::filtered_var_indices_for(&self, usize) -> alloc::vec::Vec<usize>
+pub fn azure_devtools::azure_vars::state::state::State::filtered_vars(&self) -> alloc::vec::Vec<&azure_devtools::azure_vars::state::state::VarEntry>
+pub fn azure_devtools::azure_vars::state::state::State::groups(&self) -> &[azure_devtools::azure_vars::state::state::VarGroup]
+pub fn azure_devtools::azure_vars::state::state::State::is_viewing_vars(&self) -> bool
+pub fn azure_devtools::azure_vars::state::state::State::new(alloc::string::String, alloc::string::String) -> Self
+pub fn azure_devtools::azure_vars::state::state::State::organization(&self) -> &str
+pub fn azure_devtools::azure_vars::state::state::State::project(&self) -> &str
+pub fn azure_devtools::azure_vars::state::state::State::search_query_for(&self, azure_devtools::azure_vars::state::state::SearchTarget) -> alloc::string::String
+pub fn azure_devtools::azure_vars::state::state::State::sync_selection(&mut self)
+pub fn azure_devtools::azure_vars::state::state::State::vars_group_idx(&self) -> core::option::Option<usize>
+impl core::clone::Clone for azure_devtools::azure_vars::state::state::State
+pub fn azure_devtools::azure_vars::state::state::State::clone(&self) -> Self
+impl core::fmt::Debug for azure_devtools::azure_vars::state::state::State
+pub fn azure_devtools::azure_vars::state::state::State::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct azure_devtools::azure_vars::state::state::StatusMessage
+pub azure_devtools::azure_vars::state::state::StatusMessage::kind: azure_devtools::azure_vars::state::state::StatusKind
+pub azure_devtools::azure_vars::state::state::StatusMessage::text: alloc::string::String
+impl azure_devtools::azure_vars::state::state::StatusMessage
+pub fn azure_devtools::azure_vars::state::state::StatusMessage::error(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn azure_devtools::azure_vars::state::state::StatusMessage::info(impl core::convert::Into<alloc::string::String>) -> Self
+pub struct azure_devtools::azure_vars::state::state::UiState
+pub azure_devtools::azure_vars::state::state::UiState::is_fetching: bool
+pub azure_devtools::azure_vars::state::state::UiState::search: azure_devtools::azure_vars::state::state::SearchState
+pub azure_devtools::azure_vars::state::state::UiState::status: core::option::Option<azure_devtools::azure_vars::state::state::StatusMessage>
+pub azure_devtools::azure_vars::state::state::UiState::view: azure_devtools::azure_vars::state::state::View
+impl azure_devtools::azure_vars::state::state::UiState
+pub fn azure_devtools::azure_vars::state::state::UiState::clear_status(&mut self)
+pub fn azure_devtools::azure_vars::state::state::UiState::set_status(&mut self, azure_devtools::azure_vars::state::state::StatusMessage)
+pub struct azure_devtools::azure_vars::state::state::VarEntry
+pub azure_devtools::azure_vars::state::state::VarEntry::is_secret: bool
+pub azure_devtools::azure_vars::state::state::VarEntry::name: alloc::string::String
+pub azure_devtools::azure_vars::state::state::VarEntry::value: alloc::string::String
+pub struct azure_devtools::azure_vars::state::state::VarGroup
+pub azure_devtools::azure_vars::state::state::VarGroup::name: alloc::string::String
+pub azure_devtools::azure_vars::state::state::VarGroup::variables: alloc::vec::Vec<azure_devtools::azure_vars::state::state::VarEntry>
+pub mod azure_devtools::azure_vars::state::state_store
+pub struct azure_devtools::azure_vars::state::state_store::AzureApiVariableGroupsClient
+impl azure_devtools::azure_vars::state::state_store::AzureApiVariableGroupsClient
+pub fn azure_devtools::azure_vars::state::state_store::AzureApiVariableGroupsClient::new(azure_devops_rust_api::distributed_task::variablegroups::Client) -> Self
+impl azure_devtools::azure_vars::state::state_store::VariableGroupsClient for azure_devtools::azure_vars::state::state_store::AzureApiVariableGroupsClient
+pub fn azure_devtools::azure_vars::state::state_store::AzureApiVariableGroupsClient::get_variable_groups<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 str, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = anyhow::Result<alloc::vec::Vec<azure_devtools::azure_vars::state::state::VarGroup>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub struct azure_devtools::azure_vars::state::state_store::StateStore<C: azure_devtools::azure_vars::state::state_store::VariableGroupsClient, B: azure_devtools::azure_vars::state::state_store::ClipboardAdapter>
+impl<C: azure_devtools::azure_vars::state::state_store::VariableGroupsClient, B: azure_devtools::azure_vars::state::state_store::ClipboardAdapter> azure_devtools::azure_vars::state::state_store::StateStore<C, B>
+pub async fn azure_devtools::azure_vars::state::state_store::StateStore<C, B>::main_loop(self, tokio::sync::mpsc::bounded::Receiver<azure_devtools::azure_vars::state::action::Action>)
+pub fn azure_devtools::azure_vars::state::state_store::StateStore<C, B>::with_clipboard(azure_devtools::azure_vars::state::state::State, tokio::sync::mpsc::bounded::Sender<azure_devtools::azure_vars::state::state::State>, C, B) -> Self
+impl<C: azure_devtools::azure_vars::state::state_store::VariableGroupsClient> azure_devtools::azure_vars::state::state_store::StateStore<C, azure_devtools::azure_vars::state::state_store::SystemClipboard>
+pub fn azure_devtools::azure_vars::state::state_store::StateStore<C, azure_devtools::azure_vars::state::state_store::SystemClipboard>::new(azure_devtools::azure_vars::state::state::State, tokio::sync::mpsc::bounded::Sender<azure_devtools::azure_vars::state::state::State>, C) -> Self
+pub struct azure_devtools::azure_vars::state::state_store::SystemClipboard
+impl azure_devtools::azure_vars::state::state_store::ClipboardAdapter for azure_devtools::azure_vars::state::state_store::SystemClipboard
+pub fn azure_devtools::azure_vars::state::state_store::SystemClipboard::set_text<'life0, 'async_trait>(&'life0 self, alloc::string::String) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = anyhow::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub trait azure_devtools::azure_vars::state::state_store::ClipboardAdapter: core::marker::Send + core::marker::Sync
+pub fn azure_devtools::azure_vars::state::state_store::ClipboardAdapter::set_text<'life0, 'async_trait>(&'life0 self, alloc::string::String) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = anyhow::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+impl azure_devtools::azure_vars::state::state_store::ClipboardAdapter for azure_devtools::azure_vars::state::state_store::SystemClipboard
+pub fn azure_devtools::azure_vars::state::state_store::SystemClipboard::set_text<'life0, 'async_trait>(&'life0 self, alloc::string::String) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = anyhow::Result<()>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub trait azure_devtools::azure_vars::state::state_store::VariableGroupsClient: core::marker::Send
+pub fn azure_devtools::azure_vars::state::state_store::VariableGroupsClient::get_variable_groups<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 str, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = anyhow::Result<alloc::vec::Vec<azure_devtools::azure_vars::state::state::VarGroup>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+impl azure_devtools::azure_vars::state::state_store::VariableGroupsClient for azure_devtools::azure_vars::state::state_store::AzureApiVariableGroupsClient
+pub fn azure_devtools::azure_vars::state::state_store::AzureApiVariableGroupsClient::get_variable_groups<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, &'life1 str, &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = anyhow::Result<alloc::vec::Vec<azure_devtools::azure_vars::state::state::VarGroup>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+pub mod azure_devtools::azure_vars::tui
+pub mod azure_devtools::azure_vars::tui::draw
+pub fn azure_devtools::azure_vars::tui::draw::draw_ui(&mut ratatui::terminal::frame::Frame<'_>, &azure_devtools::azure_vars::state::state::State)
+pub mod azure_devtools::azure_vars::tui::handle_input
+pub async fn azure_devtools::azure_vars::tui::handle_input::run_app(&mut ratatui::terminal::init::DefaultTerminal, tokio::sync::mpsc::bounded::Sender<azure_devtools::azure_vars::state::action::Action>, azure_devtools::azure_vars::state::state::State, tokio::sync::mpsc::bounded::Receiver<azure_devtools::azure_vars::state::state::State>) -> core::result::Result<(), alloc::boxed::Box<dyn core::error::Error>>
+pub mod azure_devtools::azure_vars::tui::widgets
+pub struct azure_devtools::azure_vars::tui::widgets::BreadCrumb
+impl azure_devtools::azure_vars::tui::widgets::BreadCrumb
+pub fn azure_devtools::azure_vars::tui::widgets::BreadCrumb::new(alloc::string::String, alloc::string::String, alloc::string::String, bool, azure_devtools::azure_vars::state::state::Theme) -> Self
+impl ratatui::widgets::Widget for azure_devtools::azure_vars::tui::widgets::BreadCrumb
+pub fn azure_devtools::azure_vars::tui::widgets::BreadCrumb::render(self, ratatui::layout::rect::Rect, &mut ratatui::buffer::buffer::Buffer) where Self: core::marker::Sized
+pub struct azure_devtools::azure_vars::tui::widgets::HelpBar
+impl azure_devtools::azure_vars::tui::widgets::HelpBar
+pub fn azure_devtools::azure_vars::tui::widgets::HelpBar::new(azure_devtools::azure_vars::state::state::Theme, bool, azure_devtools::azure_vars::state::state::SearchState) -> Self
+impl ratatui::widgets::Widget for azure_devtools::azure_vars::tui::widgets::HelpBar
+pub fn azure_devtools::azure_vars::tui::widgets::HelpBar::render(self, ratatui::layout::rect::Rect, &mut ratatui::buffer::buffer::Buffer)
+pub struct azure_devtools::azure_vars::tui::widgets::SearchBar
+impl azure_devtools::azure_vars::tui::widgets::SearchBar
+pub fn azure_devtools::azure_vars::tui::widgets::SearchBar::new(alloc::string::String, azure_devtools::azure_vars::state::state::SearchTarget) -> Self
+impl ratatui::widgets::Widget for azure_devtools::azure_vars::tui::widgets::SearchBar
+pub fn azure_devtools::azure_vars::tui::widgets::SearchBar::render(self, ratatui::layout::rect::Rect, &mut ratatui::buffer::buffer::Buffer) where Self: core::marker::Sized
+pub struct azure_devtools::azure_vars::tui::widgets::StatusBar
+impl azure_devtools::azure_vars::tui::widgets::StatusBar
+pub fn azure_devtools::azure_vars::tui::widgets::StatusBar::new(azure_devtools::azure_vars::state::state::Theme, azure_devtools::azure_vars::state::state::StatusMessage) -> Self
+impl ratatui::widgets::Widget for azure_devtools::azure_vars::tui::widgets::StatusBar
+pub fn azure_devtools::azure_vars::tui::widgets::StatusBar::render(self, ratatui::layout::rect::Rect, &mut ratatui::buffer::buffer::Buffer)
+pub struct azure_devtools::azure_vars::tui::widgets::VarGroupList
+impl azure_devtools::azure_vars::tui::widgets::VarGroupList
+pub fn azure_devtools::azure_vars::tui::widgets::VarGroupList::new(alloc::vec::Vec<azure_devtools::azure_vars::state::state::VarGroup>, azure_devtools::azure_vars::state::state::Theme, alloc::string::String, core::option::Option<usize>) -> Self
+impl ratatui::widgets::Widget for azure_devtools::azure_vars::tui::widgets::VarGroupList
+pub fn azure_devtools::azure_vars::tui::widgets::VarGroupList::render(self, ratatui::layout::rect::Rect, &mut ratatui::buffer::buffer::Buffer)
+pub struct azure_devtools::azure_vars::tui::widgets::VarList
+impl azure_devtools::azure_vars::tui::widgets::VarList
+pub fn azure_devtools::azure_vars::tui::widgets::VarList::new(alloc::vec::Vec<azure_devtools::azure_vars::state::state::VarEntry>, alloc::string::String, core::option::Option<alloc::string::String>, azure_devtools::azure_vars::state::state::Theme, core::option::Option<usize>) -> Self
+impl ratatui::widgets::Widget for azure_devtools::azure_vars::tui::widgets::VarList
+pub fn azure_devtools::azure_vars::tui::widgets::VarList::render(self, ratatui::layout::rect::Rect, &mut ratatui::buffer::buffer::Buffer)

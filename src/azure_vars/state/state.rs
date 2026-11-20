@@ -104,7 +104,7 @@ impl Default for View {
 pub struct SearchState {
     pub status: SearchStatus,
     pub groups_query: String,
-    vars_queries: HashMap<usize, String>,
+    vars_queries: HashMap<String, String>,
 }
 
 impl SearchState {
@@ -135,19 +135,19 @@ impl SearchState {
         &mut self.groups_query
     }
 
-    pub fn vars_query(&self, group_idx: usize) -> &str {
+    pub fn vars_query(&self, group_name: &str) -> &str {
         self.vars_queries
-            .get(&group_idx)
+            .get(group_name)
             .map(|s| s.as_str())
             .unwrap_or("")
     }
 
-    pub(super) fn vars_query_mut(&mut self, group_idx: usize) -> &mut String {
-        self.vars_queries.entry(group_idx).or_default()
+    pub(super) fn vars_query_mut(&mut self, group_name: &str) -> &mut String {
+        self.vars_queries.entry(group_name.to_string()).or_default()
     }
 
-    pub(super) fn clear_vars_query(&mut self, group_idx: usize) {
-        self.vars_queries.remove(&group_idx);
+    pub(super) fn clear_vars_query(&mut self, group_name: &str) {
+        self.vars_queries.remove(group_name);
     }
 }
 
@@ -290,6 +290,96 @@ impl State {
         self.filter_cache.write().unwrap().invalidate_vars();
     }
 
+    pub(super) fn insert_search_char(&mut self, ch: char) {
+        let Some(target) = self.ui.search.active_target() else {
+            return;
+        };
+
+        match target {
+            SearchTarget::Groups => {
+                self.ui.search.groups_query_mut().push(ch);
+                self.invalidate_group_cache();
+            }
+            SearchTarget::Vars => {
+                if let Some(group_idx) = self.vars_group_idx() {
+                    if let Some(group_name) = self
+                        .data
+                        .groups
+                        .get(group_idx)
+                        .map(|group| group.name.clone())
+                    {
+                        self.ui.search.vars_query_mut(&group_name).push(ch);
+                        self.invalidate_var_cache();
+                    }
+                }
+            }
+        }
+
+        self.sync_search_selection(target);
+    }
+
+    pub(super) fn backspace_search(&mut self) {
+        let Some(target) = self.ui.search.active_target() else {
+            return;
+        };
+
+        match target {
+            SearchTarget::Groups => {
+                self.ui.search.groups_query_mut().pop();
+                self.invalidate_group_cache();
+            }
+            SearchTarget::Vars => {
+                if let Some(group_idx) = self.vars_group_idx() {
+                    if let Some(group_name) = self
+                        .data
+                        .groups
+                        .get(group_idx)
+                        .map(|group| group.name.clone())
+                    {
+                        let should_remove = {
+                            let query = self.ui.search.vars_query_mut(&group_name);
+                            query.pop();
+                            query.is_empty()
+                        };
+                        if should_remove {
+                            self.ui.search.clear_vars_query(&group_name);
+                        }
+                        self.invalidate_var_cache();
+                    }
+                }
+            }
+        }
+
+        self.sync_search_selection(target);
+    }
+
+    pub(super) fn sync_search_selection(&mut self, target: SearchTarget) {
+        match target {
+            SearchTarget::Groups => {
+                let selected_idx = self.filtered_group_indices().first().copied();
+                if let View::Groups {
+                    selected_idx: selected,
+                } = &mut self.ui.view
+                {
+                    *selected = selected_idx;
+                }
+            }
+            SearchTarget::Vars => {
+                let Some(group_idx) = self.vars_group_idx() else {
+                    return;
+                };
+                let selected_var_idx = self.filtered_var_indices_for(group_idx).first().copied();
+                if let View::Vars {
+                    selected_var_idx: selected,
+                    ..
+                } = &mut self.ui.view
+                {
+                    *selected = selected_var_idx;
+                }
+            }
+        }
+    }
+
     pub fn is_viewing_vars(&self) -> bool {
         self.ui.view.is_vars()
     }
@@ -338,16 +428,24 @@ impl State {
             return indices;
         }
 
-        let mut ranked = self
-            .data
-            .groups
-            .iter()
-            .enumerate()
-            .map(|(idx, group)| (self.matcher.fuzzy_match(&group.name, query), idx))
-            .collect::<Vec<(Option<i64>, usize)>>();
+        let indices: Vec<usize> = if query.is_empty() {
+            (0..self.data.groups.len()).collect()
+        } else {
+            let mut ranked = self
+                .data
+                .groups
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, group)| {
+                    self.matcher
+                        .fuzzy_match(&group.name, query)
+                        .map(|score| (score, idx))
+                })
+                .collect::<Vec<_>>();
 
-        ranked.sort_by(|a, b| b.0.cmp(&a.0));
-        let indices = ranked.into_iter().map(|(_, idx)| idx).collect::<Vec<_>>();
+            ranked.sort_by(|a, b| b.0.cmp(&a.0));
+            ranked.into_iter().map(|(_, idx)| idx).collect()
+        };
         self.filter_cache
             .write()
             .unwrap()
@@ -360,29 +458,36 @@ impl State {
             return Vec::new();
         };
 
-        let query = self.ui.search.vars_query(group_idx);
+        let query = self.ui.search.vars_query(&group.name);
         if let Some(indices) = self.filter_cache.read().unwrap().get_vars(group_idx, query) {
             return indices;
         }
 
-        let mut vars_ranked = group
-            .variables
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, var)| {
-                let score = self
-                    .matcher
-                    .fuzzy_match(&var.name, query)
-                    .or_else(|| self.matcher.fuzzy_match(&var.value, query));
-                score.map(|s| (s, idx))
-            })
-            .collect::<Vec<(i64, usize)>>();
+        let indices: Vec<usize> = if query.is_empty() {
+            (0..group.variables.len()).collect()
+        } else {
+            let mut vars_ranked = group
+                .variables
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, var)| {
+                    let name_score = self.matcher.fuzzy_match(&var.name, query);
+                    let value_score = if var.is_secret {
+                        None
+                    } else {
+                        self.matcher.fuzzy_match(&var.value, query)
+                    };
+                    name_score
+                        .into_iter()
+                        .chain(value_score)
+                        .max()
+                        .map(|score| (score, idx))
+                })
+                .collect::<Vec<_>>();
 
-        vars_ranked.sort_by(|a, b| b.0.cmp(&a.0));
-        let indices = vars_ranked
-            .into_iter()
-            .map(|(_, idx)| idx)
-            .collect::<Vec<_>>();
+            vars_ranked.sort_by(|a, b| b.0.cmp(&a.0));
+            vars_ranked.into_iter().map(|(_, idx)| idx).collect()
+        };
         self.filter_cache
             .write()
             .unwrap()
@@ -436,51 +541,64 @@ impl State {
 
         let prev_group_name = prev_group.as_deref();
         let prev_var_name = prev_var.as_deref();
-
-        match &mut self.ui.view {
+        match self.ui.view.clone() {
             View::Groups { selected_idx } => {
-                let fallback = if prev_group_name.is_some() {
-                    0
-                } else {
-                    selected_idx.unwrap_or(0).min(self.data.groups.len() - 1)
-                };
-                let next = prev_group_name
-                    .and_then(|name| self.data.groups.iter().position(|g| g.name == name))
-                    .unwrap_or(fallback);
-                *selected_idx = Some(next);
-                self.filter_cache.write().unwrap().invalidate_groups();
+                let filtered = self.filtered_group_indices();
+                let selected_idx = prev_group_name
+                    .and_then(|name| self.data.groups.iter().position(|group| group.name == name))
+                    .filter(|idx| filtered.contains(idx))
+                    .or_else(|| {
+                        if prev_group_name.is_some() {
+                            filtered.first().copied()
+                        } else {
+                            selected_idx
+                                .filter(|idx| filtered.contains(idx))
+                                .or_else(|| filtered.first().copied())
+                        }
+                    });
+                self.ui.view = View::Groups { selected_idx };
             }
             View::Vars {
                 group_idx,
                 selected_var_idx,
             } => {
-                let fallback_group = if prev_group_name.is_some() {
-                    0
-                } else {
-                    (*group_idx).min(self.data.groups.len() - 1)
-                };
+                let filtered_groups = self.filtered_group_indices();
                 let next_group = prev_group_name
-                    .and_then(|name| self.data.groups.iter().position(|g| g.name == name))
-                    .unwrap_or(fallback_group);
-                *group_idx = next_group;
-
-                let vars = &self.data.groups[next_group].variables;
-                if vars.is_empty() {
-                    *selected_var_idx = None;
-                    self.filter_cache.write().unwrap().invalidate_vars();
+                    .and_then(|name| self.data.groups.iter().position(|group| group.name == name))
+                    .filter(|idx| filtered_groups.contains(idx))
+                    .or_else(|| {
+                        if prev_group_name.is_some() {
+                            filtered_groups.first().copied()
+                        } else {
+                            Some(group_idx.min(self.data.groups.len() - 1))
+                        }
+                    });
+                let Some(next_group) = next_group else {
+                    self.ui.view = View::Groups { selected_idx: None };
                     return;
-                }
-
-                let fallback_var = if prev_var_name.is_some() {
-                    0
-                } else {
-                    selected_var_idx.unwrap_or(0).min(vars.len() - 1)
                 };
+                let filtered_vars = self.filtered_var_indices_for(next_group);
                 let next_var = prev_var_name
-                    .and_then(|name| vars.iter().position(|v| v.name == name))
-                    .unwrap_or(fallback_var);
-                *selected_var_idx = Some(next_var);
-                self.filter_cache.write().unwrap().invalidate_vars();
+                    .and_then(|name| {
+                        self.data.groups[next_group]
+                            .variables
+                            .iter()
+                            .position(|var| var.name == name)
+                    })
+                    .filter(|idx| filtered_vars.contains(idx))
+                    .or_else(|| {
+                        if prev_var_name.is_some() {
+                            filtered_vars.first().copied()
+                        } else {
+                            selected_var_idx
+                                .filter(|idx| filtered_vars.contains(idx))
+                                .or_else(|| filtered_vars.first().copied())
+                        }
+                    });
+                self.ui.view = View::Vars {
+                    group_idx: next_group,
+                    selected_var_idx: next_var,
+                };
             }
         }
     }
@@ -490,16 +608,19 @@ impl State {
             SearchTarget::Groups => self.ui.search.groups_query().to_string(),
             SearchTarget::Vars => self
                 .vars_group_idx()
-                .map(|idx| self.ui.search.vars_query(idx).to_string())
+                .and_then(|idx| self.data.groups.get(idx))
+                .map(|group| self.ui.search.vars_query(&group.name).to_string())
                 .unwrap_or_default(),
         }
     }
 
     pub fn active_vars_query(&self) -> Option<&str> {
-        self.vars_group_idx().and_then(|idx| {
-            let query = self.ui.search.vars_query(idx);
-            if query.is_empty() { None } else { Some(query) }
-        })
+        self.vars_group_idx()
+            .and_then(|idx| self.data.groups.get(idx))
+            .and_then(|group| {
+                let query = self.ui.search.vars_query(&group.name);
+                if query.is_empty() { None } else { Some(query) }
+            })
     }
 }
 
@@ -578,9 +699,47 @@ mod tests {
 
         assert_eq!(state.filtered_vars().len(), 3);
 
-        state.ui.search.vars_query_mut(0).push_str("zzz");
+        state.ui.search.vars_query_mut("vars").push_str("zzz");
         state.invalidate_var_cache();
         assert!(state.filtered_vars().is_empty());
+    }
+
+    #[test]
+    fn group_search_omits_non_matches() {
+        let mut state = State::new("org".into(), "proj".into());
+        state.set_groups(vec![
+            group("Alpha Team", vec![]),
+            group("Beta Team", vec![]),
+        ]);
+        state.ui.search.groups_query_mut().push_str("alpha");
+        state.invalidate_group_cache();
+
+        assert_eq!(state.filtered_group_indices(), vec![0]);
+    }
+
+    #[test]
+    fn variable_search_uses_visible_values_and_never_secret_placeholders() {
+        let mut secret = var("token", "<secret value hidden>");
+        secret.is_secret = true;
+        let mut state = State::new("org".into(), "proj".into());
+        state.set_groups(vec![group(
+            "vars",
+            vec![var("endpoint", "deploy-zone"), secret],
+        )]);
+
+        state.ui.search.vars_query_mut("vars").push_str("deploy");
+        state.invalidate_var_cache();
+        assert_eq!(state.filtered_var_indices_for(0), vec![0]);
+
+        state.ui.search.vars_query_mut("vars").clear();
+        state.ui.search.vars_query_mut("vars").push_str("hidden");
+        state.invalidate_var_cache();
+        assert!(state.filtered_var_indices_for(0).is_empty());
+
+        state.ui.search.vars_query_mut("vars").clear();
+        state.ui.search.vars_query_mut("vars").push_str("token");
+        state.invalidate_var_cache();
+        assert_eq!(state.filtered_var_indices_for(0), vec![1]);
     }
 
     #[test]
@@ -594,7 +753,7 @@ mod tests {
 
         assert!(state.active_vars_query().is_none());
 
-        state.ui.search.vars_query_mut(0).push_str("alp");
+        state.ui.search.vars_query_mut("vars").push_str("alp");
         assert_eq!(state.active_vars_query(), Some("alp"));
     }
 
@@ -607,7 +766,7 @@ mod tests {
             selected_var_idx: Some(0),
         };
         state.ui.search.groups_query_mut().push_str("be");
-        state.ui.search.vars_query_mut(0).push_str("alp");
+        state.ui.search.vars_query_mut("vars").push_str("alp");
 
         assert_eq!(
             state.search_query_for(SearchTarget::Groups),
@@ -658,6 +817,45 @@ mod tests {
             state.current_group().map(|g| g.name.as_str()),
             Some("Delta")
         );
+    }
+
+    #[test]
+    fn refresh_keeps_selection_inside_filtered_groups() {
+        let mut state = State::new("org".into(), "proj".into());
+        state.set_groups(vec![group("Alpha", vec![]), group("Beta", vec![])]);
+        state.ui.view = View::Groups {
+            selected_idx: Some(1),
+        };
+        state.ui.search.groups_query_mut().push_str("beta");
+        state.invalidate_group_cache();
+
+        state.set_groups(vec![group("Beta", vec![]), group("Alpha", vec![])]);
+        assert_eq!(
+            state.current_group().map(|group| group.name.as_str()),
+            Some("Beta")
+        );
+        assert_eq!(state.filtered_group_indices(), vec![0]);
+
+        state.set_groups(vec![group("Gamma", vec![]), group("Delta", vec![])]);
+        assert!(state.filtered_group_indices().is_empty());
+        assert_eq!(state.current_group(), None);
+    }
+
+    #[test]
+    fn refresh_clears_the_view_when_group_search_has_no_results() {
+        let mut state = State::new("org".into(), "proj".into());
+        state.set_groups(vec![group("AlphaOnly", vec![var("key", "value")])]);
+        state.ui.view = View::Vars {
+            group_idx: 0,
+            selected_var_idx: Some(0),
+        };
+        state.ui.search.groups_query_mut().push_str("AlphaOnly");
+        state.invalidate_group_cache();
+
+        state.set_groups(vec![group("Beta", vec![var("key", "value")])]);
+
+        assert!(matches!(state.ui.view, View::Groups { selected_idx: None }));
+        assert!(state.filtered_group_indices().is_empty());
     }
 
     #[test]
@@ -713,5 +911,31 @@ mod tests {
 
         assert_eq!(state.current_group().map(|g| g.name.as_str()), Some("B"));
         assert_eq!(state.current_var().map(|v| v.name.as_str()), Some("beta"));
+    }
+
+    #[test]
+    fn variable_queries_follow_group_names_across_navigation_and_refresh() {
+        let mut state = State::new("org".into(), "proj".into());
+        state.set_groups(vec![
+            group("A", vec![var("alpha", "first")]),
+            group("B", vec![var("beta", "second")]),
+        ]);
+        state.ui.search.vars_query_mut("A").push_str("alpha");
+        state.ui.search.vars_query_mut("B").push_str("beta");
+        state.ui.view = View::Vars {
+            group_idx: 1,
+            selected_var_idx: Some(0),
+        };
+
+        state.set_groups(vec![
+            group("B", vec![var("beta", "second")]),
+            group("A", vec![var("alpha", "first")]),
+        ]);
+
+        assert_eq!(state.vars_group_idx(), Some(0));
+        assert_eq!(state.ui.search.vars_query("B"), "beta");
+        assert_eq!(state.filtered_var_indices_for(0), vec![0]);
+        assert_eq!(state.ui.search.vars_query("A"), "alpha");
+        assert_eq!(state.filtered_var_indices_for(1), vec![0]);
     }
 }

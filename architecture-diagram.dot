@@ -1,0 +1,79 @@
+digraph AzureDevToolsArchitecture {
+  graph [
+    rankdir=LR,
+    bgcolor="transparent",
+    pad="0.28",
+    nodesep="0.55",
+    ranksep="0.8",
+    fontname="Arial",
+    fontsize=18,
+    labelloc="t",
+    label="Azure DevTools — Runtime Architecture",
+    outputorder="edgesfirst"
+  ];
+  node [
+    shape=box,
+    style="rounded,filled",
+    fontname="Arial",
+    fontsize=12,
+    margin="0.18,0.12",
+    color="#cbd5e1",
+    fillcolor="#ffffff",
+    fontcolor="#172033",
+    penwidth=1.4
+  ];
+  edge [
+    fontname="Arial",
+    fontsize=10,
+    color="#64748b",
+    fontcolor="#475569",
+    penwidth=1.3,
+    arrowsize=0.75
+  ];
+
+  subgraph cluster_terminal {
+    label="Terminal";
+    color="#bbf7d0";
+    style="rounded";
+    fontname="Arial";
+    fontsize=13;
+    key_input [label="Crossterm input\nkeys → Actions", color="#16a34a", fillcolor="#f0fdf4"];
+    app_view [label="run_app\nreceives State snapshots", color="#16a34a", fillcolor="#f0fdf4"];
+    draw [label="draw_ui\nfiltered rows + selected row position", color="#16a34a", fillcolor="#f0fdf4"];
+    widgets [label="Ratatui widgets\nlists · status · empty state", color="#16a34a", fillcolor="#f0fdf4"];
+    key_input -> app_view [label="event loop"];
+    app_view -> draw [label="latest snapshot"];
+    draw -> widgets [label="render"];
+  }
+
+  subgraph cluster_state {
+    label="Application state and action loop";
+    color="#ddd6fe";
+    style="rounded";
+    fontname="Arial";
+    fontsize=13;
+    actions [label="Action channel\nsearch · navigate · refresh · copy · export", color="#7c3aed", fillcolor="#f5f3ff"];
+    store [label="StateStore\nhandles operations and emits snapshots", color="#7c3aed", fillcolor="#f5f3ff"];
+    state [label="State\nAppData · UiState · query state\nfuzzy filters · cache · selection", color="#7c3aed", fillcolor="#f5f3ff"];
+    actions -> store [label="dispatch"];
+    store -> state [label="apply actions"];
+    state -> store [label="updated state"];
+  }
+
+  subgraph cluster_adapters {
+    label="External adapters";
+    color="#fed7aa";
+    style="rounded";
+    fontname="Arial";
+    fontsize=13;
+    azure [label="Azure DevOps API\nVariableGroupsClient", color="#d97706", fillcolor="#fffbeb"];
+    clipboard [label="System clipboard\nClipboardAdapter", color="#d97706", fillcolor="#fffbeb"];
+    filesystem [label="Local filesystem\npretty JSON export", color="#d97706", fillcolor="#fffbeb"];
+  }
+
+  store -> app_view [label="State channel", constraint=false];
+  key_input -> actions [label="send", constraint=false];
+  store -> azure [label="fetch snapshot"];
+  store -> clipboard [label="copy selected value"];
+  store -> filesystem [label="export selected group"];
+}

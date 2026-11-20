@@ -5,7 +5,7 @@ use ratatui::{
 };
 
 use crate::azure_vars::{
-    state::state::{SearchTarget, State},
+    state::state::{SearchTarget, State, View},
     tui::widgets::{BreadCrumb, HelpBar, SearchBar, StatusBar, VarGroupList, VarList},
 };
 
@@ -61,27 +61,45 @@ pub fn draw_ui(f: &mut Frame, state: &State) {
     );
 
     if !state.is_viewing_vars() {
-        if let Some(selected_group) = state.current_group() {
-            f.render_widget(
-                VarGroupList::new(
-                    state.filtered_groups().into_iter().cloned().collect(),
-                    state.theme,
-                    selected_group.clone(),
-                ),
-                chunks[2],
-            );
-        }
-    } else if let (Some(selected_group), Some(selected_var)) =
-        (state.current_group(), state.current_var())
-    {
-        let vars = state.filtered_vars().into_iter().cloned().collect();
+        let group_indices = state.filtered_group_indices();
+        let groups = group_indices
+            .iter()
+            .filter_map(|idx| state.groups().get(*idx).cloned())
+            .collect();
+        let selected_position = match &state.ui.view {
+            View::Groups { selected_idx } => selected_idx
+                .and_then(|selected| group_indices.iter().position(|idx| *idx == selected)),
+            View::Vars { .. } => None,
+        };
+        f.render_widget(
+            VarGroupList::new(
+                groups,
+                state.theme,
+                state.ui.search.groups_query().to_string(),
+                selected_position,
+            ),
+            chunks[2],
+        );
+    } else if let Some(selected_group) = state.current_group() {
+        let var_indices = state.filtered_var_indices();
+        let vars = var_indices
+            .iter()
+            .filter_map(|idx| selected_group.variables.get(*idx).cloned())
+            .collect();
+        let selected_position = match &state.ui.view {
+            View::Vars {
+                selected_var_idx, ..
+            } => selected_var_idx
+                .and_then(|selected| var_indices.iter().position(|idx| *idx == selected)),
+            View::Groups { .. } => None,
+        };
         f.render_widget(
             VarList::new(
                 vars,
                 selected_group.name.clone(),
                 state.active_vars_query().map(str::to_string),
                 state.theme,
-                selected_var.clone(),
+                selected_position,
             ),
             chunks[2],
         );
