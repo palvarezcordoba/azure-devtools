@@ -1,10 +1,9 @@
 use azure_devops_rust_api::{Credential, distributed_task::ClientBuilder};
-use azure_devtools::azure_vars::state::{
-    action::Action,
-    state::State,
-    state_store::{AzureApiVariableGroupsClient, StateStore},
-};
 use azure_devtools::azure_vars::tui::handle_input::run_app;
+use azure_devtools::azure_vars::{
+    adapters::azure::AzureApiVariableGroupsClient,
+    state::{action::Action, state::State, state_store::StateStore},
+};
 use azure_identity::AzureCliCredential;
 use crossterm::{
     execute,

@@ -1,182 +1,27 @@
-use std::{
-    fs,
-    path::PathBuf,
-    sync::{Arc, Mutex as StdMutex, MutexGuard},
-};
+use std::path::PathBuf;
 
-use crate::azure_vars::state::state::*;
-use arboard::Clipboard;
-use async_trait::async_trait;
-use azure_devops_rust_api::distributed_task::variablegroups;
+use crate::azure_vars::{adapters::filesystem::JsonFileExporter, state::state::*};
 use log::{info, warn};
-use tokio::{
-    sync::{
-        Mutex as AsyncMutex,
-        mpsc::{Receiver, Sender},
-    },
-    task::spawn_blocking,
-};
+use tokio::sync::mpsc::{Receiver, Sender};
 
 use super::action::Action;
 
-#[derive(Clone)]
-struct SharedClipboard(Arc<StdMutex<Clipboard>>);
+pub use crate::azure_vars::adapters::azure::AzureApiVariableGroupsClient;
+pub use crate::azure_vars::adapters::clipboard::SystemClipboard;
+pub use crate::azure_vars::application::ports::{
+    ClipboardAdapter, VariableGroupExporter, VariableGroupsClient,
+};
 
-impl SharedClipboard {
-    fn new(inner: Clipboard) -> Self {
-        Self(Arc::new(StdMutex::new(inner)))
-    }
-
-    fn lock(&self) -> Result<MutexGuard<'_, Clipboard>, arboard::Error> {
-        self.0.lock().map_err(|_| arboard::Error::Unknown {
-            description: "Clipboard mutex poisoned".to_string(),
-        })
-    }
-}
-
-#[async_trait]
-pub trait VariableGroupsClient: Send {
-    async fn get_variable_groups(
-        &self,
-        organization: &str,
-        project: &str,
-    ) -> anyhow::Result<Vec<VarGroup>>;
-}
-
-#[async_trait]
-pub trait ClipboardAdapter: Send + Sync {
-    async fn set_text(&self, text: String) -> anyhow::Result<()>;
-}
-
-#[derive(Default)]
-pub struct SystemClipboard {
-    clipboard: AsyncMutex<Option<SharedClipboard>>,
-}
-
-impl SystemClipboard {
-    async fn clipboard_handle(&self) -> anyhow::Result<SharedClipboard> {
-        if let Some(existing) = {
-            let guard = self.clipboard.lock().await;
-            guard.clone()
-        } {
-            return Ok(existing);
-        }
-
-        let clipboard = match spawn_blocking(Clipboard::new).await {
-            Ok(Ok(clipboard)) => clipboard,
-            Ok(Err(error)) => {
-                warn!("Failed to initialize clipboard: {error}");
-                return Err(anyhow::anyhow!("Failed to initialize clipboard: {error}"));
-            }
-            Err(error) => {
-                warn!("Clipboard init task failed: {error}");
-                return Err(anyhow::anyhow!("Clipboard init task failed: {error}"));
-            }
-        };
-
-        let handle = SharedClipboard::new(clipboard);
-        let mut guard = self.clipboard.lock().await;
-        if let Some(existing) = guard.as_ref() {
-            return Ok(existing.clone());
-        }
-        *guard = Some(handle.clone());
-        Ok(handle)
-    }
-
-    async fn clear_clipboard_handle(&self) {
-        self.clipboard.lock().await.take();
-    }
-}
-
-#[async_trait]
-impl ClipboardAdapter for SystemClipboard {
-    async fn set_text(&self, text: String) -> anyhow::Result<()> {
-        let clipboard = self.clipboard_handle().await?;
-        let result = spawn_blocking(move || -> Result<(), arboard::Error> {
-            let mut guard = clipboard.lock()?;
-            guard.set_text(text)
-        })
-        .await;
-
-        match result {
-            Ok(Ok(())) => Ok(()),
-            Ok(Err(error)) => {
-                warn!("Failed to copy variable to clipboard: {error}");
-                self.clear_clipboard_handle().await;
-                Err(anyhow::anyhow!(
-                    "Failed to copy variable to clipboard: {error}"
-                ))
-            }
-            Err(error) => {
-                warn!("Clipboard task failed: {error}");
-                self.clear_clipboard_handle().await;
-                Err(anyhow::anyhow!("Clipboard task failed: {error}"))
-            }
-        }
-    }
-}
-
-pub struct AzureApiVariableGroupsClient {
-    client: variablegroups::Client,
-}
-
-impl AzureApiVariableGroupsClient {
-    pub fn new(client: variablegroups::Client) -> Self {
-        Self { client }
-    }
-}
-
-#[async_trait]
-impl VariableGroupsClient for AzureApiVariableGroupsClient {
-    async fn get_variable_groups(
-        &self,
-        organization: &str,
-        project: &str,
-    ) -> anyhow::Result<Vec<VarGroup>> {
-        let groups_resp = self
-            .client
-            .get_variable_groups(organization.to_string(), project.to_string())
-            .await?;
-
-        let groups = groups_resp
-            .value
-            .into_iter()
-            .filter_map(|g| {
-                let name = g.name.clone()?;
-                let vars = g.variables.as_ref()?.as_object()?;
-                let variables = vars
-                    .iter()
-                    .map(|(k, v)| {
-                        let is_secret =
-                            v.get("isSecret").and_then(|b| b.as_bool()).unwrap_or(false);
-                        let value = if is_secret {
-                            "<secret value hidden>".to_string()
-                        } else {
-                            v.get("value")
-                                .and_then(|vv| vv.as_str())
-                                .unwrap_or("<no value>")
-                                .to_string()
-                        };
-                        VarEntry {
-                            name: k.clone(),
-                            value,
-                            is_secret,
-                        }
-                    })
-                    .collect();
-                Some(VarGroup { name, variables })
-            })
-            .collect::<Vec<_>>();
-
-        Ok(groups)
-    }
-}
-
-pub struct StateStore<C: VariableGroupsClient, B: ClipboardAdapter = SystemClipboard> {
+pub struct StateStore<
+    C: VariableGroupsClient,
+    B: ClipboardAdapter = SystemClipboard,
+    E: VariableGroupExporter = JsonFileExporter,
+> {
     var_groups_client: C,
     state: State,
     state_tx: Sender<State>,
     clipboard: B,
+    exporter: E,
 }
 
 impl<C: VariableGroupsClient> StateStore<C, SystemClipboard> {
@@ -190,7 +35,7 @@ impl<C: VariableGroupsClient> StateStore<C, SystemClipboard> {
     }
 }
 
-impl<C: VariableGroupsClient, B: ClipboardAdapter> StateStore<C, B> {
+impl<C: VariableGroupsClient, B: ClipboardAdapter> StateStore<C, B, JsonFileExporter> {
     pub fn with_clipboard(
         state: State,
         state_tx: Sender<State>,
@@ -202,9 +47,12 @@ impl<C: VariableGroupsClient, B: ClipboardAdapter> StateStore<C, B> {
             var_groups_client,
             state,
             clipboard,
+            exporter: JsonFileExporter,
         }
     }
+}
 
+impl<C: VariableGroupsClient, B: ClipboardAdapter, E: VariableGroupExporter> StateStore<C, B, E> {
     pub async fn main_loop(mut self, action_rx: Receiver<Action>) {
         let mut action_rx = action_rx;
 
@@ -342,21 +190,12 @@ impl<C: VariableGroupsClient, B: ClipboardAdapter> StateStore<C, B> {
     }
 
     fn export_current_group(&self, path: Option<PathBuf>) -> anyhow::Result<PathBuf> {
-        let mut group = self
+        let group = self
             .state
             .current_group()
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("No variable group selected to export"))?;
-        for variable in &mut group.variables {
-            if variable.is_secret {
-                variable.value = "<secret value hidden>".to_string();
-            }
-        }
-        let path = path
-            .unwrap_or_else(|| format!("{}_variables.json", group.name.replace(' ', "_")).into());
-        let json = serde_json::to_string_pretty(&group)?;
-        fs::write(&path, json)?;
-        Ok(path)
+        self.exporter.export(&group, path)
     }
 
     async fn copy_selected_var(&mut self) {
@@ -426,9 +265,11 @@ impl<C: VariableGroupsClient, B: ClipboardAdapter> StateStore<C, B> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
     use mockall::mock;
     use std::{
         collections::VecDeque,
+        fs,
         sync::{Arc, Mutex},
     };
     use tempfile::tempdir;
@@ -627,7 +468,22 @@ mod tests {
         let contents = fs::read_to_string(&export_path).expect("exported file readable");
         let mut expected_group = group;
         expected_group.variables[1].value = "<secret value hidden>".to_string();
-        let expected = serde_json::to_string_pretty(&expected_group).unwrap();
+        let variables = expected_group
+            .variables
+            .iter()
+            .map(|variable| {
+                serde_json::json!({
+                    "name": variable.name,
+                    "value": variable.value,
+                    "is_secret": variable.is_secret,
+                })
+            })
+            .collect::<Vec<_>>();
+        let expected = serde_json::to_string_pretty(&serde_json::json!({
+            "name": expected_group.name,
+            "variables": variables,
+        }))
+        .unwrap();
         assert_eq!(contents, expected);
     }
 

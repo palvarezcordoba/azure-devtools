@@ -2,55 +2,8 @@ use std::{collections::HashMap, fmt::Debug, sync::RwLock};
 
 use fuzzy_matcher::FuzzyMatcher;
 use fuzzy_matcher::skim::SkimMatcherV2;
-use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
-pub struct VarEntry {
-    pub name: String,
-    pub value: String,
-    pub is_secret: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
-pub struct VarGroup {
-    pub name: String,
-    pub variables: Vec<VarEntry>,
-}
-
-#[derive(Clone, Copy, Default, Debug)]
-pub enum Theme {
-    #[default]
-    Dark,
-    Light,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StatusKind {
-    Info,
-    Error,
-}
-
-#[derive(Debug, Clone)]
-pub struct StatusMessage {
-    pub text: String,
-    pub kind: StatusKind,
-}
-
-impl StatusMessage {
-    pub fn info(message: impl Into<String>) -> Self {
-        Self {
-            text: message.into(),
-            kind: StatusKind::Info,
-        }
-    }
-
-    pub fn error(message: impl Into<String>) -> Self {
-        Self {
-            text: message.into(),
-            kind: StatusKind::Error,
-        }
-    }
-}
+pub use crate::azure_vars::domain::models::{StatusKind, StatusMessage, Theme, VarEntry, VarGroup};
 
 #[derive(Debug, Clone)]
 pub struct AppData {

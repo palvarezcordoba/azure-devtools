@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Azure Variables Refactor — Change Report</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        color: #172033;
+        background: #f4f7fb;
+      }
+
+      body {
+        max-width: 960px;
+        margin: 0 auto;
+        padding: 2rem 1.25rem 3rem;
+        line-height: 1.6;
+      }
+
+      header, section {
+        background: #fff;
+        border: 1px solid #dce4ef;
+        border-radius: 12px;
+        padding: 1.25rem 1.5rem;
+        margin-bottom: 1rem;
+      }
+
+      h1, h2 {
+        line-height: 1.25;
+      }
+
+      h1 {
+        margin: 0 0 0.5rem;
+        font-size: clamp(1.7rem, 4vw, 2.4rem);
+      }
+
+      h2 {
+        margin-top: 0;
+        font-size: 1.25rem;
+      }
+
+      .eyebrow, .muted {
+        color: #526179;
+      }
+
+      .eyebrow {
+        margin: 0 0 0.35rem;
+        font-size: 0.8rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      code {
+        overflow-wrap: anywhere;
+        color: #163f78;
+        background: #eef4fc;
+        border-radius: 4px;
+        padding: 0.1rem 0.3rem;
+      }
+
+      li + li {
+        margin-top: 0.45rem;
+      }
+
+      .note {
+        border-left: 4px solid #4779c7;
+        padding-left: 1rem;
+      }
+
+      @media (max-width: 560px) {
+        body {
+          padding: 1rem 0.75rem 2rem;
+        }
+
+        header, section {
+          padding: 1rem;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <p class="eyebrow">Change report</p>
+      <h1>Azure Variables Refactor</h1>
+      <p class="muted">Summary of the current worktree changes. Generated November 20, 2026.</p>
+      <p>
+        The variable-group feature is being reorganized into domain, application, and adapter
+        modules. Existing state and CLI entry points are updated to use the new module locations.
+      </p>
+    </header>
+
+    <main>
+      <section>
+        <h2>At a glance</h2>
+        <ul>
+          <li>Added <code>domain</code> models for variable entries/groups and UI status/theme types.</li>
+          <li>Added application ports for fetching variable groups, clipboard operations, and exporting.</li>
+          <li>Moved Azure DevOps API access, system clipboard handling, and JSON file export into adapters.</li>
+          <li>Updated <code>StateStore</code> to use the exporter port while keeping JSON export as its default.</li>
+          <li>Updated module exports and the CLI imports; adjusted Cargo dependencies and crate feature declarations.</li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>Architecture changes</h2>
+        <ul>
+          <li>
+            <code>src/azure_vars/domain/models.rs</code> now defines <code>VarEntry</code>,
+            <code>VarGroup</code>, <code>Theme</code>, <code>StatusKind</code>, and
+            <code>StatusMessage</code>.
+          </li>
+          <li>
+            <code>src/azure_vars/application/ports.rs</code> defines the client, clipboard, and
+            exporter interfaces used by application logic.
+          </li>
+          <li>
+            <code>src/azure_vars/adapters/azure.rs</code> implements retrieval and conversion of
+            Azure DevOps variable groups.
+          </li>
+          <li>
+            <code>src/azure_vars/adapters/clipboard.rs</code> contains the system clipboard
+            implementation, including its asynchronous/blocking-work handling.
+          </li>
+          <li>
+            <code>src/azure_vars/adapters/filesystem.rs</code> writes variable groups as formatted
+            JSON and masks secret values in the exported document.
+          </li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>Notable existing-file updates</h2>
+        <ul>
+          <li>
+            <code>src/azure_vars/state/state.rs</code> removes the inline model definitions and
+            re-exports those types from the domain module.
+          </li>
+          <li>
+            <code>src/azure_vars/state/state_store.rs</code> removes embedded Azure/clipboard
+            implementations in favor of adapter re-exports, and delegates group export to
+            <code>VariableGroupExporter</code>. Export tests were updated for the JSON document
+            shape.
+          </li>
+          <li>
+            <code>src/bin/azure_variables.rs</code> imports the Azure client from its new adapter
+            module.
+          </li>
+          <li>
+            <code>Cargo.toml</code> moves <code>mockall</code> to dev-dependencies, removes
+            dependencies no longer used by the edited code, and <code>Cargo.lock</code> changes
+            accordingly.
+          </li>
+          <li>
+            <code>src/lib.rs</code> removes three crate feature declarations; the existing
+            <code>test</code> feature declaration remains.
+          </li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>Behavior and verification</h2>
+        <p>
+          The intended user-facing behavior remains the same: groups can be loaded, variables can
+          be copied, and the selected group can be exported to JSON. Secret values are masked in
+          exports.
+        </p>
+        <p class="note">
+          This report summarizes the current workspace diff, including untracked new module files.
+          It does not claim that a build or test suite has been run.
+        </p>
+      </section>
+    </main>
+  </body>
+</html>
