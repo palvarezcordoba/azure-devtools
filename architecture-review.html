@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Architecture review for azure-devtools</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: ui-sans-serif, system-ui, sans-serif; }
+    .module { border: 2px solid #334155; background: white; }
+    .deep-module { border: 3px solid #0f172a; background: linear-gradient(135deg, #0f172a, #334155); color: white; }
+    .seam { border-top: 2px dashed #94a3b8; }
+    .leak { border-left: 4px solid #dc2626; }
+    .arrow { width: 34px; height: 2px; background: #64748b; position: relative; }
+    .arrow:after { content: ""; position:absolute; right:-1px; top:-4px; border-left:8px solid #64748b; border-top:5px solid transparent; border-bottom:5px solid transparent; }
+  </style>
+</head>
+<body class="bg-stone-50 text-slate-900">
+  <main class="max-w-6xl mx-auto px-6 py-12 space-y-12">
+    <header class="space-y-3">
+      <p class="text-xs uppercase tracking-widest text-slate-500">Architecture review / 2026-11-20</p>
+      <h1 class="text-4xl font-serif">azure-devtools</h1>
+      <div class="flex gap-4 text-xs text-slate-600">
+        <span>□ module</span><span class="border-t-2 border-dashed border-slate-400 px-1">seam</span><span class="text-red-600">← leakage</span><span class="font-semibold text-slate-950">■ deep module</span>
+      </div>
+    </header>
+
+    <section id="candidates" class="space-y-10">
+      <article id="search-selection" class="rounded-xl border border-slate-200 bg-white p-6 space-y-6">
+        <div class="flex items-center justify-between">
+          <h2 class="text-2xl font-serif">Cohere search, filtering, and selection</h2>
+          <span class="rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-800">Strong</span>
+        </div>
+        <p class="font-mono text-sm text-slate-500">state.rs · state_store.rs</p>
+        <div class="grid grid-cols-2 gap-6">
+          <div>
+            <h3 class="mb-3 text-xs uppercase tracking-widest text-slate-500">Before / shallow</h3>
+            <div class="h-72 rounded-lg border border-slate-200 bg-slate-50 p-5 flex flex-col items-center justify-center gap-3">
+              <div class="module rounded p-3 text-sm w-44 text-center">Query mutation</div>
+              <div class="arrow"></div>
+              <div class="module rounded p-3 text-sm w-44 text-center leak">Cache invalidation</div>
+              <div class="arrow"></div>
+              <div class="module rounded p-3 text-sm w-44 text-center">Ranked indices</div>
+              <div class="arrow"></div>
+              <div class="module rounded p-3 text-sm w-44 text-center leak">Selected item</div>
+              <p class="text-xs text-red-700">Rules span State and StateStore</p>
+            </div>
+          </div>
+          <div>
+            <h3 class="mb-3 text-xs uppercase tracking-widest text-slate-500">After / deep</h3>
+            <div class="h-72 rounded-lg border border-slate-200 bg-slate-50 p-5 flex items-center justify-center">
+              <div class="deep-module rounded-xl p-6 w-72 h-52 flex flex-col justify-center items-center text-center shadow-xl">
+                <strong class="text-lg">Search & Selection module</strong>
+                <span class="mt-3 text-sm text-slate-200">Query · cache · ranked results · selection invariants</span>
+                <span class="mt-5 text-xs uppercase tracking-widest text-emerald-300">One interface</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="grid md:grid-cols-3 gap-4 text-sm">
+          <div><strong>Problem</strong><p>Cache validity and selection preservation are coordinated manually across modules.</p></div>
+          <div><strong>Solution</strong><p>Give search and selection behavior one owner with one interface for in-process state rules.</p></div>
+          <div><strong>Wins</strong><ul class="list-disc pl-5"><li>Leverage: callers exercise one invariant set</li><li>Locality: bugs concentrate in one module</li><li>Tests cross the interface</li></ul></div>
+        </div>
+      </article>
+
+      <article id="effect-outcomes" class="rounded-xl border border-slate-200 bg-white p-6 space-y-6">
+        <div class="flex items-center justify-between">
+          <h2 class="text-2xl font-serif">Separate effect lifecycle from state transitions</h2>
+          <span class="rounded-full bg-amber-100 px-3 py-1 text-xs font-bold text-amber-800">Worth exploring</span>
+        </div>
+        <p class="font-mono text-sm text-slate-500">state_store.rs · state_store.rs Azure adapter · azure_variables.rs</p>
+        <div class="grid grid-cols-2 gap-6">
+          <div>
+            <h3 class="mb-3 text-xs uppercase tracking-widest text-slate-500">Before / shallow</h3>
+            <div class="h-72 rounded-lg border border-slate-200 bg-slate-50 p-5 relative">
+              <div class="module rounded p-3 w-48 text-center absolute left-1/2 -translate-x-1/2 top-5">Action loop</div>
+              <div class="seam absolute left-5 right-5 top-24"></div>
+              <div class="module rounded p-3 w-36 text-center absolute left-5 top-32 leak">Azure fetch</div>
+              <div class="module rounded p-3 w-36 text-center absolute left-1/2 -translate-x-1/2 top-32 leak">Clipboard</div>
+              <div class="module rounded p-3 w-36 text-center absolute right-5 top-32 leak">Filesystem</div>
+              <p class="absolute bottom-5 left-0 right-0 text-center text-xs text-red-700">Different outcome rules behind one loop</p>
+            </div>
+          </div>
+          <div>
+            <h3 class="mb-3 text-xs uppercase tracking-widest text-slate-500">After / deep</h3>
+            <div class="h-72 rounded-lg border border-slate-200 bg-slate-50 p-5 flex items-center justify-center gap-4">
+              <div class="deep-module rounded-xl p-5 w-48 h-52 flex flex-col justify-center text-center">
+                <strong>Operation module</strong>
+                <span class="mt-3 text-sm text-slate-200">Refresh · copy · export outcomes</span>
+              </div>
+              <div class="flex flex-col gap-3">
+                <div class="module rounded px-3 py-2 text-xs leak">Azure adapter</div>
+                <div class="module rounded px-3 py-2 text-xs">Clipboard adapter</div>
+                <div class="module rounded px-3 py-2 text-xs">Filesystem adapter</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="grid md:grid-cols-3 gap-4 text-sm">
+          <div><strong>Problem</strong><p>Remote fetch, clipboard, file export, state transitions, and status outcomes share one loop.</p></div>
+          <div><strong>Solution</strong><p>Concentrate operation outcomes while preserving the external adapters at their real seams.</p></div>
+          <div><strong>Wins</strong><ul class="list-disc pl-5"><li>Locality: failure behavior concentrates</li><li>Leverage: operations test through outcomes</li><li>SDK mapping stays in adapters</li></ul></div>
+        </div>
+      </article>
+
+      <article id="render-projection" class="rounded-xl border border-slate-200 bg-white p-6 space-y-6">
+        <div class="flex items-center justify-between">
+          <h2 class="text-2xl font-serif">Cohere screen projection and rendering</h2>
+          <span class="rounded-full bg-slate-200 px-3 py-1 text-xs font-bold text-slate-700">Speculative</span>
+        </div>
+        <p class="font-mono text-sm text-slate-500">draw.rs · widgets.rs · state.rs</p>
+        <div class="grid grid-cols-2 gap-6">
+          <div>
+            <h3 class="mb-3 text-xs uppercase tracking-widest text-slate-500">Before / shallow</h3>
+            <div class="h-72 rounded-lg border border-slate-200 bg-slate-50 p-5 flex flex-col items-center justify-center gap-3">
+              <div class="module rounded p-3 w-44 text-center">State projection</div>
+              <div class="arrow"></div>
+              <div class="module rounded p-3 w-44 text-center leak">draw_ui cloning</div>
+              <div class="arrow"></div>
+              <div class="module rounded p-3 w-44 text-center leak">Widget equality lookup</div>
+            </div>
+          </div>
+          <div>
+            <h3 class="mb-3 text-xs uppercase tracking-widest text-slate-500">After / deep</h3>
+            <div class="h-72 rounded-lg border border-slate-200 bg-slate-50 p-5 flex items-center justify-center">
+              <div class="deep-module rounded-xl p-6 w-72 h-52 flex flex-col justify-center items-center text-center">
+                <strong>Screen module</strong>
+                <span class="mt-3 text-sm text-slate-200">View projection · selection · rendering</span>
+                <span class="mt-5 text-xs uppercase tracking-widest text-emerald-300">One test surface</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="grid md:grid-cols-3 gap-4 text-sm">
+          <div><strong>Problem</strong><p>Displayed view behavior spans State, draw_ui, and widgets; selection also relies on domain equality.</p></div>
+          <div><strong>Solution</strong><p>Concentrate screen projection and rendering in one place, only if rendering tests prove the leak.</p></div>
+          <div><strong>Wins</strong><ul class="list-disc pl-5"><li>Locality: screen behavior concentrates</li><li>Leverage: rendering tests survive refactors</li><li>Clones become fewer</li></ul></div>
+        </div>
+      </article>
+    </section>
+
+    <section id="top-recommendation" class="rounded-xl bg-slate-950 p-8 text-white">
+      <p class="text-xs uppercase tracking-widest text-slate-400">Top recommendation</p>
+      <h2 class="mt-2 text-3xl font-serif"><a href="#search-selection" class="underline decoration-emerald-400">Cohere search, filtering, and selection</a></h2>
+      <p class="mt-3 text-slate-300">It has the strongest cross-module invariant friction, an in-process dependency category, and a concrete deletion-test payoff.</p>
+    </section>
+  </main>
+</body>
+</html>
