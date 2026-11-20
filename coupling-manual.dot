@@ -1,0 +1,74 @@
+digraph AzureDevToolsModuleCoupling {
+  graph [
+    rankdir=LR,
+    bgcolor="transparent",
+    pad="0.35",
+    nodesep="0.65",
+    ranksep="0.9",
+    fontname="Arial",
+    fontsize=18,
+    labelloc="t",
+    label="Azure DevTools — Internal Module Coupling (manual baseline)",
+    outputorder="edgesfirst"
+  ];
+  node [
+    shape=box,
+    style="rounded,filled",
+    fontname="Arial",
+    fontsize=11,
+    margin="0.16,0.12",
+    color="#94a3b8",
+    fillcolor="#ffffff",
+    fontcolor="#172033",
+    penwidth=1.4
+  ];
+  edge [
+    fontname="Arial",
+    fontsize=9,
+    color="#64748b",
+    fontcolor="#475569",
+    penwidth=1.25,
+    arrowsize=0.7
+  ];
+
+  bin [label="azure_variables (bin)\nfan-in 0 · fan-out 4\nentry point", color="#d97706", fillcolor="#fffbeb"];
+
+  subgraph cluster_state {
+    label="azure_vars::state";
+    color="#ddd6fe";
+    style="rounded";
+    fontname="Arial";
+    fontsize=12;
+    action [label="action\nfan-in 3 · fan-out 0", color="#7c3aed", fillcolor="#f5f3ff"];
+    state [label="state\nfan-in 5 · fan-out 0\ncentral shared data types", color="#7c3aed", fillcolor="#f5f3ff", penwidth=2.2];
+    store [label="state_store\nfan-in 1 · fan-out 2", color="#7c3aed", fillcolor="#f5f3ff"];
+  }
+
+  subgraph cluster_tui {
+    label="azure_vars::tui";
+    color="#bbf7d0";
+    style="rounded";
+    fontname="Arial";
+    fontsize=12;
+    input [label="handle_input\nfan-in 1 · fan-out 3", color="#16a34a", fillcolor="#f0fdf4"];
+    draw [label="draw\nfan-in 1 · fan-out 2", color="#16a34a", fillcolor="#f0fdf4"];
+    widgets [label="widgets\nfan-in 1 · fan-out 1", color="#16a34a", fillcolor="#f0fdf4"];
+  }
+
+  bin -> action [label="Action"];
+  bin -> state [label="State"];
+  bin -> store [label="Azure client, StateStore"];
+  bin -> input [label="run_app"];
+
+  input -> action [label="Action"];
+  input -> state [label="State"];
+  input -> draw [label="draw_ui"];
+
+  store -> action [label="Action"];
+  store -> state [label="state types"];
+
+  draw -> state [label="view and domain types"];
+  draw -> widgets [label="widget constructors"];
+
+  widgets -> state [label="rendered domain types"];
+}
