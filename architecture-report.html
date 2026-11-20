@@ -78,11 +78,31 @@
   </section>
 
   <section>
+    <h2>Module coupling — analyzer-derived library graph</h2>
+    <img class="diagram" src="coupling-analyzed.svg" alt="cargo-modules generated library module dependency graph with fan-in and fan-out">
+    <p>This view uses <code>cargo-modules 0.28.0</code> to parse the library crate and extract module-to-module <code>uses</code> edges. Fan-in and fan-out count distinct incoming and outgoing module edges. The graph layout is rendered deterministically with Graphviz 3.31.0 (WASM).</p>
+    <p>The analyzed library graph contains 6 modules and 8 direct dependency edges. <code>azure_vars::state::state</code> is the most depended-on module (fan-in 4); <code>azure_vars::tui::handle_input</code> has the widest direct dependency set (fan-out 3). The binary target is not included in this library-only graph.</p>
+    <div class="grid">
+      <div class="card">
+        <strong>Coupling matrix</strong>
+        Rows depend on columns. Filled cells indicate direct module dependencies.
+        <img class="diagram" src="coupling-matrix.svg" alt="Dependency matrix for Rust library modules">
+      </div>
+      <div class="card">
+        <strong>Reproduce the analyzer input</strong>
+        <p><code>cargo modules dependencies --lib --no-externs --no-sysroot --no-fns --no-types --no-traits --no-owns --layout dot</code></p>
+        <p>The checked-in postprocessor creates the degree-labeled graph and matrix from analyzer output.</p>
+        <p><a href="tools/generate_coupling_graph.py">View graph generator</a> · <a href="coupling-analyzed.dot">View rendered-graph DOT</a></p>
+      </div>
+    </div>
+  </section>
+
+  <section>
     <h2>Module coupling — manual baseline</h2>
     <img class="diagram" src="coupling-manual.svg" alt="Graphviz module dependency graph with direct fan-in and fan-out counts">
-    <p>This first-pass coupling graph is compiled manually from the current Rust module imports. Arrows mean “depends on”; edge labels show the imported symbol groups. Each node’s fan-in and fan-out counts distinct internal modules, not import statements or external crates.</p>
-    <p>The <code>state</code> module is the most depended-on module in this slice (fan-in 5) and is also a leaf in the internal dependency graph. This is expected for shared domain/UI state, but it is a useful candidate to inspect for interface breadth. The visualization does not infer type-level coupling, call frequency, or dependency cycles beyond the edges shown.</p>
-    <p><a href="coupling-manual.dot">View coupling DOT source</a> · For analyzer-derived public module structure and interface entries, see the <a href="rust-public-api-report.html">Rust public API report</a>. That output does not infer dependency edges.</p>
+    <p>This first-pass graph is compiled manually from inspected Rust module imports. It also includes the executable’s direct imports of the library, which the analyzer’s <code>--lib</code> graph above intentionally omits. Arrows mean “depends on”; counts are distinct internal modules.</p>
+    <p>Use this view to see the CLI consumer relationship, and the analyzer-derived graph and matrix as the reproducible library coupling view. Neither view measures call frequency or runtime coupling.</p>
+    <p><a href="coupling-manual.dot">View coupling DOT source</a> · For analyzer-derived public module structure and interface entries, see the <a href="rust-public-api-report.html">Rust public API report</a>.</p>
   </section>
 
   <section>
